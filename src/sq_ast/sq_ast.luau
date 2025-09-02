@@ -1,0 +1,379 @@
+export type Stat =
+	StatIf
+	| StatWhile
+	| StatDoWhile
+	| StatSwitch
+	| StatFor
+	| StatForEach
+	| StatBreak
+	| StatContinue
+	| StatReturn
+	| StatYield
+	| StatLocalAssignment
+	| StatFunction
+	| StatClass
+	| StatTryCatch
+	| StatThrow
+	| StatConst
+	| StatEnum
+    | StatExpr
+
+export type Expr =
+	ExprGlobal
+	| ExprAssignment
+	| ExprNewSlot
+	| ExprTernary
+	| ExprBinary
+	| ExprUnary
+	| ExprBitwise
+	| ExprIncDec
+	| ExprIn
+	| ExprInstanceOf
+	| ExprTypeof
+	| ExprComma
+	| ExprTable
+	| ExprFunction
+	| ExprDelegate
+	| ExprClone
+	| ExprArray
+	| ExprDelete
+	| ExprCall
+	| ExprVar
+	| ExprFloat
+	| ExprInteger
+	| ExprString
+	| ExprNull
+	| ExprBool
+
+export type Identifier = string
+
+export type Var = {
+	kind: "var",
+    root: VarRoot,
+    suffixes: { VarSuffix },
+}
+
+export type VarRoot = {
+	kind: "name",
+	name: Identifier,
+} | {
+	kind: "paren",
+	expr: Expr,
+}
+
+export type VarSuffix = 
+		{
+			kind: "nameindex",
+			name: Identifier,
+		} | {
+			kind: "exprindex",
+			expr: Expr,
+		} | {
+            kind: "call",
+            method: Identifier?,
+            args: { Expr }
+        }
+
+export type ExprFloat = { kind: "float", float: number }
+export type ExprInteger = { kind: "int", int: number }
+export type ExprString = { kind: "string", string: number }
+export type ExprBool = { kind: "bool", bool: boolean }
+export type ExprNull = { kind: "null" }
+
+export type BinaryOperator =
+	"+"
+	| "-"
+	| "*"
+	| "/"
+	| "%"
+	| "=="
+	| "!="
+	| "<="
+	| ">="
+
+export type UnaryOperator = "-" | "!" | "~"
+
+export type CompoundOperator = "+=" | "-=" | "*=" | "/=" | "%="
+export type AssignmentOperator = "=" | CompoundOperator
+
+export type BitwiseOperator = "<<" | ">>" | ">>>" | "&" | "^" | "|"
+
+export type StatIf = {
+	kind: "if",
+	branches: {
+		{
+			condition: Expr,
+			block: Block,
+		}
+	},
+	else_block: Block?,
+}
+
+export type StatWhile = {
+	kind: "while",
+	condition: Expr,
+	block: Block,
+}
+
+export type StatDoWhile = {
+	kind: "dowhile",
+	block: Block,
+	condition: Block,
+}
+
+export type StatSwitch = {
+	kind: "switch",
+	value: Expr,
+	cases: {
+		case_expr: Expr,
+		block: Block,
+	},
+	default: Block?,
+}
+
+export type StatFor = {
+	kind: "for",
+	init_expr: Expr | StatLocalAssignment?,
+	cond_expr: Expr?,
+	incr_expr: Expr?,
+	block: Block,
+}
+
+export type StatForEach = {
+	kind: "foreach",
+	index_ident: Identifier?,
+	value_ident: Identifier,
+	expr: Expr,
+	block: Block,
+}
+
+export type StatBreak = {
+	kind: "break",
+}
+
+export type StatContinue = {
+	kind: "continue",
+}
+
+export type StatReturn = {
+	kind: "return",
+	expr: Expr,
+}
+
+export type StatYield = {
+	kind: "yield",
+	expr: Expr,
+}
+
+export type StatLocalAssignment = {
+	kind: "localassignment",
+	assignments: {
+		ident: Identifier,
+		expr: Expr,
+	},
+}
+
+export type StatFunction = {
+	kind: "function",
+
+	-- this doesnt behave like a var with suffixes
+	root: Identifier,
+	method: Identifier?,
+
+	parameters: { Identifier },
+	free_variables: { Identifier }?,
+	block: Block,
+}
+
+export type StatClass = {
+	kind: "class",
+	name: Identifier,
+	extends: Identifier?,
+	fields: {
+		{
+			kind: "namekey",
+			key: Identifier,
+			expr: Expr,
+		} | {
+			kind: "exprkey",
+			key: Expr,
+			expr: Expr,
+		} | {
+			kind: "function",
+			func: StatFunction,
+		} | {
+			kind: "constructor",
+			func: ExprFunction,
+		}
+	},
+}
+
+export type StatTryCatch = {
+	kind: "trycatch",
+	try: Block,
+	catch_ident: Identifier,
+	catch_block: Block,
+}
+
+export type StatThrow = {
+	kind: "throw",
+	expr: Expr,
+}
+
+export type StatConst = {
+	kind: "const",
+	name: Identifier,
+	value: ExprInteger | ExprFloat | ExprString,
+}
+
+export type StatEnum = {
+	kind: "enum",
+	name: Identifier,
+	enumerations: {
+		{
+			name: Identifier,
+			value: (ExprInteger | ExprFloat | ExprString)?,
+		}
+	},
+}
+
+export type StatExpr = {
+	kind: "statexpr",
+	expr: Expr,
+}
+
+-- expressions
+export type ExprGlobal = {
+	kind: "exprglobal",
+	member: Identifier,
+}
+
+export type ExprAssignment = {
+	kind: "exprassignment",
+	var: Var,
+	operator: AssignmentOperator,
+	value: Expr,
+}
+
+export type ExprNewSlot = {
+	kind: "exprnewslot",
+	var: Var,
+	value: Expr,
+}
+
+export type ExprTernary = {
+	kind: "exprternary",
+	condition: Expr,
+	then_expr: Expr,
+	else_expr: Expr,
+}
+
+export type ExprBinary = {
+	kind: "exprbinary",
+	left: Expr,
+	operator: BinaryOperator,
+	right: Expr?,
+}
+
+export type ExprUnary = {
+	kind: "exprunary",
+	operator: UnaryOperator,
+	expr: Expr,
+}
+
+export type ExprBitwise = {
+	kind: "exprbitwise",
+	left: Expr,
+	operator: BitwiseOperator,
+	right: Expr,
+}
+
+export type ExprIncDec = {
+	kind: "exprincdec",
+	var: Var,
+	operation: "increment" | "decrement",
+}
+
+export type ExprIn = {
+	kind: "exprin",
+	key: Expr,
+	table: Expr,
+}
+
+export type ExprInstanceOf = {
+	kind: "exprinstanceof",
+	instance: Expr,
+	class: Identifier,
+}
+
+export type ExprTypeof = {
+	kind: "exprtypeof",
+	exp: Expr,
+}
+
+export type ExprComma = {
+	kind: "exprcomma",
+	left: Expr,
+	right: Expr,
+}
+
+export type ExprTable = {
+	kind: "exprtable",
+	fields: {
+		{
+			kind: "namekey",
+			key: Identifier,
+			expr: Expr,
+		} | {
+			kind: "exprkey",
+			key: Expr,
+			expr: Expr,
+		}
+	},
+}
+
+export type ExprFunction = {
+	kind: "exprfunction",
+	parameters: { Identifier },
+	free_variables: { Identifier }?,
+	block: Block,
+}
+
+export type ExprDelegate = {
+	kind: "exprdelegate",
+	parent: Expr,
+	child: Expr,
+}
+
+export type ExprClone = {
+	kind: "exprclone",
+	expr: Expr,
+}
+
+export type ExprArray = {
+	kind: "exprarray",
+	values: { Expr },
+}
+
+export type ExprDelete = {
+	kind: "exprdelete",
+	var: Var,
+}
+
+export type ExprCall = {
+	kind: "exprcall",
+	func: Var,
+	args: { Expr },
+}
+
+export type ExprVar = {
+	kind: "exprvar",
+	var: Var,
+}
+
+-- normally, blocks are statements but i dont care so most stats are blocks
+export type Block = {
+	stats: { Stat },
+}
+
+return nil

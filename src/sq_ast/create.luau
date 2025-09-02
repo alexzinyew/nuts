@@ -1,0 +1,90 @@
+local luau = require "../../luaup/lossless/cst"
+local sq = require "../sq_ast/sq_ast"
+
+local create = {}
+
+function create.null(): sq.ExprNull
+	return { kind = "null" }
+end
+
+function create.int(int: number): sq.ExprInteger
+	return { kind = "int", int = int }
+end
+
+function create.float(float: number): sq.ExprFloat
+	return { kind = "float", float = float }
+end
+
+function create.bool(bool: boolean): sq.ExprBool
+	return { kind = "bool", bool = bool }
+end
+
+function create.string(string: string): sq.ExprString
+	return { kind = "string", string = string }
+end
+
+function create.binary(
+	left: sq.Expr,
+	op: sq.BinaryOperator,
+	right: sq.Expr
+): sq.ExprBinary
+	return {
+		kind = "exprbinary",
+		left = left,
+		operator = op,
+		right = right,
+	}
+end
+
+function create.unary(expr: sq.Expr, op: sq.BinaryOperator): sq.ExprUnary
+	return {
+		kind = "exprbinary",
+		operator = op,
+		expr = expr,
+	}
+end
+
+function create.stat_expr(expr: sq.Expr): sq.StatExpr
+	return {
+		kind = "statexpr",
+		expr = expr,
+	}
+end
+
+function create.expr_assignment(
+	left: sq.Var,
+	op: sq.AssignmentOperator,
+	right: sq.Expr
+): sq.ExprAssignment
+	return {
+		kind = "exprassignment",
+		var = left,
+		operator = op,
+		value = right,
+	}
+end
+
+function create.var(root: sq.VarRoot, suffixes: sq.VarSuffix): sq.Var
+	return {
+		kind = "var",
+		root = root,
+		suffixes = suffixes,
+	}
+end
+
+function create.expr_var(var: sq.Var): sq.ExprVar
+	return {
+		kind = "exprvar",
+		var = var
+	}
+end
+
+function create.stat_while(condition: sq.Expr, block: sq.Stat): sq.StatWhile
+    return {
+        kind = "while",
+        condition = condition,
+        block = block,
+    }
+end
+
+return create

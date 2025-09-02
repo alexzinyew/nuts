@@ -1,0 +1,3 @@
+[submodule "luaup"]
+	path = luaup
+	url = https://github.com/jackdotink/luaup
