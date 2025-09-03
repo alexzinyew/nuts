@@ -1,16 +1,11 @@
 local fs = require "@lute/fs"
 
 local luau_parser = require "../luaup/lossless/parse"
-local sq_transform_block = require "./sq_transformer/transform_block"
+local sq_transform = require "./sq_transformer/transform"
 
 local args = { ... }
 local file_name = assert(args[2], "expected file name")
 local file_content = fs.readfiletostring(file_name)
-
-file_content = "a(1, 2).nameindex['exprindex'] = 1\
-a += 1; a ..= ''\
-a(); a(true, false)\
-a = `simple`; a = `first {'middle'} end`"
 
 local luau_parse_result = luau_parser(file_content)
 assert(luau_parse_result.success, "Failed to parse input")
@@ -37,6 +32,8 @@ local state = {
 --     return table[key]
 -- }
 --
+-- or delegate all tables to one with a metamethod to handle invalid keys
+--
 -- make custom array class type def
 
 function tprint(tbl, indent)
@@ -56,4 +53,4 @@ function tprint(tbl, indent)
 	end
 end
 
-tprint(sq_transform_block(state, luau_parse_result.cst.block))
+tprint(sq_transform.block(state, luau_parse_result.cst.block))

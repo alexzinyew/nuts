@@ -16,7 +16,7 @@ export type Stat =
 	| StatThrow
 	| StatConst
 	| StatEnum
-    | StatExpr
+	| StatExpr
 
 export type Expr =
 	ExprGlobal
@@ -37,7 +37,6 @@ export type Expr =
 	| ExprClone
 	| ExprArray
 	| ExprDelete
-	| ExprCall
 	| ExprVar
 	| ExprFloat
 	| ExprInteger
@@ -49,8 +48,8 @@ export type Identifier = string
 
 export type Var = {
 	kind: "var",
-    root: VarRoot,
-    suffixes: { VarSuffix },
+	root: VarRoot,
+	suffixes: { VarSuffix },
 }
 
 export type VarRoot = {
@@ -61,18 +60,17 @@ export type VarRoot = {
 	expr: Expr,
 }
 
-export type VarSuffix = 
-		{
-			kind: "nameindex",
-			name: Identifier,
-		} | {
-			kind: "exprindex",
-			expr: Expr,
-		} | {
-            kind: "call",
-            method: Identifier?,
-            args: { Expr }
-        }
+export type VarSuffix = {
+	kind: "nameindex",
+	name: Identifier,
+} | {
+	kind: "exprindex",
+	expr: Expr,
+} | {
+	kind: "call",
+	method: Identifier?,
+	args: { Expr },
+}
 
 export type ExprFloat = { kind: "float", float: number }
 export type ExprInteger = { kind: "int", int: number }
@@ -94,18 +92,18 @@ export type BinaryOperator =
 export type UnaryOperator = "-" | "!" | "~"
 
 export type CompoundOperator = "+=" | "-=" | "*=" | "/=" | "%="
-export type AssignmentOperator = "=" | CompoundOperator
+export type AssignmentOperator = "<-" | "=" | CompoundOperator
 
 export type BitwiseOperator = "<<" | ">>" | ">>>" | "&" | "^" | "|"
 
+export type IfStatBranch = {
+	condition: Expr,
+	block: Block,
+}
+
 export type StatIf = {
 	kind: "if",
-	branches: {
-		{
-			condition: Expr,
-			block: Block,
-		}
-	},
+	branches: { IfStatBranch },
 	else_block: Block?,
 }
 
@@ -133,7 +131,7 @@ export type StatSwitch = {
 
 export type StatFor = {
 	kind: "for",
-	init_expr: Expr | StatLocalAssignment?,
+	init_expr: Expr?,
 	cond_expr: Expr?,
 	incr_expr: Expr?,
 	block: Block,
@@ -167,10 +165,8 @@ export type StatYield = {
 
 export type StatLocalAssignment = {
 	kind: "localassignment",
-	assignments: {
-		ident: Identifier,
-		expr: Expr,
-	},
+    ident: Identifier,
+    expr: Expr,
 }
 
 export type StatFunction = {
@@ -358,12 +354,6 @@ export type ExprArray = {
 export type ExprDelete = {
 	kind: "exprdelete",
 	var: Var,
-}
-
-export type ExprCall = {
-	kind: "exprcall",
-	func: Var,
-	args: { Expr },
 }
 
 export type ExprVar = {

@@ -36,9 +36,9 @@ function create.binary(
 	}
 end
 
-function create.unary(expr: sq.Expr, op: sq.BinaryOperator): sq.ExprUnary
+function create.unary(expr: sq.Expr, op: sq.UnaryOperator): sq.ExprUnary
 	return {
-		kind = "exprbinary",
+		kind = "exprunary",
 		operator = op,
 		expr = expr,
 	}
@@ -75,15 +75,52 @@ end
 function create.expr_var(var: sq.Var): sq.ExprVar
 	return {
 		kind = "exprvar",
-		var = var
+		var = var,
 	}
 end
 
 function create.stat_while(condition: sq.Expr, block: sq.Stat): sq.StatWhile
+	return {
+		kind = "while",
+		condition = condition,
+		block = block,
+	}
+end
+
+function create.stat_dowhile(block: sq.Stat, condition: sq.Expr): sq.StatDoWhile
+	return {
+		kind = "dowhile",
+		block = block,
+		condition = condition,
+	}
+end
+
+function create.stat_if(
+	branches: sq.IfStatBranch,
+	else_block: sq.Block?
+): sq.StatIf
+	return {
+		kind = "if",
+		branches = branches,
+		else_block = else_block,
+	}
+end
+
+function create.stat_for(block: sq.Block, init: sq.Expr?, cond: sq.Expr?, incr: sq.Expr?): sq.StatFor
     return {
-        kind = "while",
-        condition = condition,
-        block = block,
+        kind = "for",
+        init_expr = init,
+        cond_expr = cond,
+        incr_expr = incr,
+        block = block
+    }
+end
+
+function create.stat_localvariable(ident: sq.Identifier, value: sq.Expr): sq.StatLocalAssignment
+    return {
+        kind = "localassignment",
+        ident = ident,
+        expr = value,
     }
 end
 
