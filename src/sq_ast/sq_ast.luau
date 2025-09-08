@@ -5,9 +5,6 @@ export type Stat =
 	| StatSwitch
 	| StatFor
 	| StatForEach
-	| StatBreak
-	| StatContinue
-	| StatReturn
 	| StatYield
 	| StatLocalAssignment
 	| StatFunction
@@ -17,6 +14,11 @@ export type Stat =
 	| StatConst
 	| StatEnum
 	| StatExpr
+
+export type LastStat =
+    LastStatReturn
+    | LastStatBreak
+    | LastStatContinue
 
 export type Expr =
 	ExprGlobal
@@ -88,6 +90,8 @@ export type BinaryOperator =
 	| "!="
 	| "<="
 	| ">="
+    | "||"
+    | "&&"
 
 export type UnaryOperator = "-" | "!" | "~"
 
@@ -131,7 +135,7 @@ export type StatSwitch = {
 
 export type StatFor = {
 	kind: "for",
-	init_expr: Expr?,
+	init_expr: Expr | StatLocalAssignment?,
 	cond_expr: Expr?,
 	incr_expr: Expr?,
 	block: Block,
@@ -145,13 +149,6 @@ export type StatForEach = {
 	block: Block,
 }
 
-export type StatBreak = {
-	kind: "break",
-}
-
-export type StatContinue = {
-	kind: "continue",
-}
 
 export type StatReturn = {
 	kind: "return",
@@ -236,6 +233,19 @@ export type StatEnum = {
 export type StatExpr = {
 	kind: "statexpr",
 	expr: Expr,
+}
+
+export type LastStatReturn = {
+    kind: "return",
+    expr: Expr?,
+}
+
+export type LastStatBreak = {
+	kind: "break",
+}
+
+export type LastStatContinue = {
+	kind: "continue",
 }
 
 -- expressions
@@ -364,6 +374,7 @@ export type ExprVar = {
 -- normally, blocks are statements but i dont care so most stats are blocks
 export type Block = {
 	stats: { Stat },
+    last_stat: LastStat?
 }
 
 return nil

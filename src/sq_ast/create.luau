@@ -64,7 +64,30 @@ function create.expr_assignment(
 	}
 end
 
-function create.var(root: sq.VarRoot, suffixes: sq.VarSuffix): sq.Var
+function create.var_nameroot(name: sq.Identifier): sq.VarRoot
+	return { kind = "name", name = name }
+end
+
+function create.var_parenroot(expr: sq.Expr): sq.VarRoot
+	return { kind = "paren", expr = expr }
+end
+
+function create.var_namesuffix(name: sq.Identifier): sq.VarSuffix
+	return { kind = "nameindex", name = name }
+end
+
+function create.var_exprsuffix(expr: sq.Expr): sq.VarSuffix
+	return { kind = "exprindex", expr = expr }
+end
+
+function create.var_callsuffix(
+	method: sq.Identifier?,
+	args: { sq.Expr }
+): sq.VarSuffix
+	return { kind = "call", method = method, args = args }
+end
+
+function create.var(root: sq.VarRoot, suffixes: { sq.VarSuffix }): sq.Var
 	return {
 		kind = "var",
 		root = root,
@@ -106,21 +129,48 @@ function create.stat_if(
 	}
 end
 
-function create.stat_for(block: sq.Block, init: sq.Expr?, cond: sq.Expr?, incr: sq.Expr?): sq.StatFor
-    return {
-        kind = "for",
-        init_expr = init,
-        cond_expr = cond,
-        incr_expr = incr,
-        block = block
-    }
+function create.stat_for(
+	block: sq.Block,
+	init: sq.Expr?,
+	cond: sq.Expr?,
+	incr: sq.Expr?
+): sq.StatFor
+	return {
+		kind = "for",
+		init_expr = init,
+		cond_expr = cond,
+		incr_expr = incr,
+		block = block,
+	}
 end
 
-function create.stat_localvariable(ident: sq.Identifier, value: sq.Expr): sq.StatLocalAssignment
+function create.stat_localvariable(
+	ident: sq.Identifier,
+	value: sq.Expr
+): (sq.StatLocalAssignment, sq.Var)
+	return {
+		kind = "localassignment",
+		ident = ident,
+		expr = value,
+	}, {
+		kind = "var",
+		root = ident,
+		suffixes = {},
+	}
+end
+
+function create.stat_foreach(
+	i_id: sq.Identifier,
+	v_id: sq.Identifier,
+	expr: sq.Expr,
+	block: sq.Block
+): sq.StatForEach
     return {
-        kind = "localassignment",
-        ident = ident,
-        expr = value,
+        kind = "foreach",
+        index_ident = i_id,
+        value_ident = v_id,
+        expr = expr,
+        block = block
     }
 end
 
