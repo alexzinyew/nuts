@@ -14,6 +14,7 @@ local prereqs, postreqs = {}, {}
 local state = {
 	prereqs = prereqs,
     postreqs = postreqs,
+    tuple = {},
 	move_clear_prereqs = function(destination: { any }, start: number?)
 		table.move(prereqs, 1, #prereqs, start or 1, destination)
 		table.clear(prereqs)

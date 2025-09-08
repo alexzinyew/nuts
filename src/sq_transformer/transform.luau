@@ -165,6 +165,9 @@ function scope_var(var: sq.Var): sq.Var
 			accumulator = wrap_index(accumulator, suffix.expr)
 		elseif suffix.kind == "call" then
 			table.insert(accumulator.suffixes, suffix)
+
+			-- If this isnt a tuple assignment:
+			--  insert [0] index
 		end
 	end
 
@@ -172,9 +175,6 @@ function scope_var(var: sq.Var): sq.Var
 end
 
 function transform_var(state, var: luau.Var): sq.Var
-	-- a.b.c()[0]
-	-- __index__(__index__(__index__(__scope__.a, "b"), "c")(), 0)
-
 	local root, suffixes = nil, {}
 	if var.root.kind == "name" then
 		root = create.var_nameroot(var.root.tok.text)
@@ -194,13 +194,6 @@ function transform_var(state, var: luau.Var): sq.Var
 			table.insert(suffixes, create.var_callsuffix(method, args))
 		end
 	end
-
-    if #suffixes > 0 then
-        local last = suffixes[#suffixes]
-        if last.kind == "call" then
-
-        end
-    end
 
 	local sqvar = create.var(root, suffixes)
 
@@ -307,55 +300,67 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 		-- tuple
 		-- tuples only assign to more than one variable IF its a function and
 		-- it is the rightmost or not in parens
-        --
-        -- all function calls and iterators need to be wrapped in a handler
-        -- to return the first value
-        -- unless we are assigning a tuple which we know from the ast
-        --
-        -- 
-
-		local new_pairs = {}
+		--
+		-- all function calls and iterators need to be wrapped in a handler
+		-- to return the first value
+		-- unless we are assigning a tuple which we know from the ast
+		--
 
 		for i, pair in stat.right do
 			local expr = transform_expr(state, pair.node)
 
 			if expr.kind == "exprvar" then
-				if expr.var.root.kind == "paren" then
-					-- call helper function to return 0th index if its a tuple
-					-- otherwise return value
-					--
-					-- -- insert to new_left
-					-- if stat.left[i] then
-					-- 	table.insert(
-					-- 		new_left,
-					-- 		transform_var(state, stat.left[i].node)
-					-- 	)
-					-- end
-
-
-				elseif #expr.var.suffixes > 0 then
+				if #expr.var.suffixes > 0 then
 					if expr.var.suffixes[#expr.var.suffixes].kind == "call" then
 						if i == #stat.right then
-							-- this needs a way to create statements with like postreqs or sm
+							-- function call as the last var, can assign multiple!
+
+							local temp_name = unique_id "tuple"
+							local temp_var =
+								create.var(create.var_nameroot(temp_name), {})
+
+							state.tuple[expr.var] = { temp = temp_name }
+
+							-- set state so unpacking can happen
+							local vars = {}
+							for j = #stat.left - i, #stat.left do
+								local var =
+									transform_var(state, stat.left[j].node)
+
+								table.insert(vars, var)
+							end
+
+							unpack_tuple(state, temp_name, vars, false)
+
+							-- tuple_result = expr()
+							table.insert(
+								stats,
+								create.stat_expr(
+									create.expr_assignment(temp_var, "=", expr)
+								)
+							)
 						else
-							-- call helper function to return 0th index if its a tuple
-							-- otherwise return value
-							--
-							-- insert to new_left
+							local var = transform_var(state, stat.left[i].node)
+                            -- not a multi-assignment on a function call, so assign the
+                            -- first
+                            --
+                            -- TODO there is a mysteroius empty statement
+
+							table.insert(
+								expr.var.suffixes,
+								create.var_exprsuffix(create.int(0))
+							)
+
+							table.insert(
+								stats,
+								create.stat_expr(
+									create.expr_assignment(var, "=", expr)
+								)
+							)
 						end
 					end
 				end
 			end
-		end
-
-		for i, pair in stat.left do
-			local expr = transform_expr(state, stat.right[i].node)
-			local var = transform_var(state, pair.node)
-
-			table.insert(
-				stats,
-				create.stat_expr(create.expr_assignment(var, "=", expr))
-			)
 		end
 		return stats
 	elseif stat.kind == "compoundassign" then
