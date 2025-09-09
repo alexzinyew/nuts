@@ -45,12 +45,14 @@ function transform_block(state, block: luau.Block)
 
 		local result = transform_stat(state, stat)
 
-		table.insert(stats, state.postreqs)
-		table.clear(state.postreqs)
-
 		for _, v in result do
 			table.insert(stats, v)
 		end
+
+		for _, poststat in state.postreqs do
+			table.insert(stats, poststat)
+		end
+		table.clear(state.postreqs)
 	end
 
 	return {
@@ -118,11 +120,9 @@ function unpack_tuple(
 	for i, var in vars do
 		local assignment
 
-		local value = scope_var(
-			create.var(
-				create.var_nameroot(tuple),
-				{ create.var_callsuffix(nil, { create.int(i) }) }
-			)
+		local value = create.var(
+			create.var_nameroot(tuple),
+			{ create.var_exprsuffix(create.int(i - 1)) }
 		)
 
 		if local_variable then
@@ -148,6 +148,11 @@ function scope_var(var: sq.Var): sq.Var
 	else
 		-- to avoid literals becoming indexed
 		if var.root.expr.kind ~= "exprvar" then
+			return var
+		end
+
+		-- to avoid (x) becoming scope.scope.x
+		if var.root.kind == "paren" then
 			return var
 		end
 
@@ -179,7 +184,26 @@ function transform_var(state, var: luau.Var): sq.Var
 	if var.root.kind == "name" then
 		root = create.var_nameroot(var.root.tok.text)
 	else
-		root = create.var_parenroot(transform_expr(state, var.root.expr))
+		local expr = transform_expr(state, var.root.expr)
+
+		-- (x()) needs to become (x()[0]) because it wont be done in assignments
+		if expr.kind == "exprvar" then
+			local rvar = expr.var
+
+			if
+				#rvar.suffixes > 0
+				and rvar.suffixes[#rvar.suffixes].kind == "call"
+			then
+				-- TODO turn into a nameroot ideally cuz the parens here are unecessary
+				-- anyway
+				table.insert(
+					rvar.suffixes,
+					create.var_exprsuffix(create.int(0))
+				)
+			end
+		end
+
+		root = create.var_parenroot(expr)
 	end
 
 	for _, suffix in var.suffixes do
@@ -294,40 +318,33 @@ function transform_expr(state, expr: luau.Expr): sq.Expr
 end
 
 function transform_stat(state, stat: luau.Stat): { sq.Stat }
+    -- figure out how to make this work for localvariabes and forin
 	if stat.kind == "assign" then
-		local stats = {}
+		local stats = {} :: { sq.Stat }
 
-		-- tuple
-		-- tuples only assign to more than one variable IF its a function and
-		-- it is the rightmost or not in parens
-		--
-		-- all function calls and iterators need to be wrapped in a handler
-		-- to return the first value
-		-- unless we are assigning a tuple which we know from the ast
-		--
-
+        -- this skips the assignment for "b" in "a, b = 0"
+        -- doesnt affect functionality though
 		for i, pair in stat.right do
 			local expr = transform_expr(state, pair.node)
 
 			if expr.kind == "exprvar" then
 				if #expr.var.suffixes > 0 then
 					if expr.var.suffixes[#expr.var.suffixes].kind == "call" then
-						if i == #stat.right then
+						if
+							i == #stat.right
+                            and #stat.left > i
+							and expr.var.root.kind == "name"
+						then
 							-- function call as the last var, can assign multiple!
 
 							local temp_name = unique_id "tuple"
-							local temp_var =
-								create.var(create.var_nameroot(temp_name), {})
 
-							state.tuple[expr.var] = { temp = temp_name }
-
-							-- set state so unpacking can happen
 							local vars = {}
-							for j = #stat.left - i, #stat.left do
-								local var =
+							for j = i, #stat.left do
+								local leftvar =
 									transform_var(state, stat.left[j].node)
 
-								table.insert(vars, var)
+								table.insert(vars, leftvar)
 							end
 
 							unpack_tuple(state, temp_name, vars, false)
@@ -335,17 +352,15 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 							-- tuple_result = expr()
 							table.insert(
 								stats,
-								create.stat_expr(
-									create.expr_assignment(temp_var, "=", expr)
-								)
+								(create.stat_localvariable(temp_name, expr))
 							)
-						else
-							local var = transform_var(state, stat.left[i].node)
-                            -- not a multi-assignment on a function call, so assign the
-                            -- first
-                            --
-                            -- TODO there is a mysteroius empty statement
 
+							continue
+						elseif stat.left[i] then
+							local var = transform_var(state, stat.left[i].node)
+							-- function call that isnt a tuple or is wrapped in parens
+							--
+							-- index first element of tuple
 							table.insert(
 								expr.var.suffixes,
 								create.var_exprsuffix(create.int(0))
@@ -357,9 +372,20 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 									create.expr_assignment(var, "=", expr)
 								)
 							)
+
+							continue
 						end
 					end
 				end
+			end
+
+			-- anything else
+			if stat.left[i] then
+				local var = transform_var(state, stat.left[i].node)
+				table.insert(
+					stats,
+					create.stat_expr(create.expr_assignment(var, "=", expr))
+				)
 			end
 		end
 		return stats
