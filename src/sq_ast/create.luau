@@ -165,11 +165,28 @@ function create.stat_foreach(
 	expr: sq.Expr,
 	block: sq.Block
 ): sq.StatForEach
+	return {
+		kind = "foreach",
+		index_ident = i_id,
+		value_ident = v_id,
+		expr = expr,
+		block = block,
+	}
+end
+
+function create.stat_function(
+	name: sq.Identifier,
+	method: sq.Identifier?,
+	params: { sq.Identifier },
+	free_vars: { sq.Identifier }?,
+    block: sq.Block
+): sq.StatFunction
     return {
-        kind = "foreach",
-        index_ident = i_id,
-        value_ident = v_id,
-        expr = expr,
+        kind = "function",
+        root = name,
+        method = method,
+        parameters = params,
+        free_variables = free_vars,
         block = block
     }
 end

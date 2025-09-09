@@ -43,16 +43,16 @@ function transform_block(state, block: luau.Block)
 	for _, pair in block.stats do
 		local stat = pair.node
 
+		for _, poststat in state.postreqs do
+			table.insert(stats, poststat)
+		end
+		table.clear(state.postreqs)
+
 		local result = transform_stat(state, stat)
 
 		for _, v in result do
 			table.insert(stats, v)
 		end
-
-		for _, poststat in state.postreqs do
-			table.insert(stats, poststat)
-		end
-		table.clear(state.postreqs)
 	end
 
 	return {
@@ -109,6 +109,16 @@ function unique_id(ident: sq.Identifier)
 	return ident
 end
 
+function can_be_tuple(state, var: sq.Var): boolean
+	if #var.suffixes == 0 then
+		return false
+	end
+	if var.suffixes[#var.suffixes].kind ~= "call" then
+		return false
+	end
+	return true
+end
+
 function unpack_tuple(
 	state,
 	tuple: sq.Identifier,
@@ -126,8 +136,8 @@ function unpack_tuple(
 		)
 
 		if local_variable then
-			assert(var.root.kind == "name")
-			assignment = create.stat_localvariable(var.root.name, value)
+			assignment =
+				create.stat_expr(create.expr_assignment(var, "<-", value))
 		else
 			assignment =
 				create.stat_expr(create.expr_assignment(var, "=", value))
@@ -135,6 +145,84 @@ function unpack_tuple(
 
 		table.insert(state.postreqs, assignment)
 		table.insert(stats, assignment)
+	end
+
+	return stats
+end
+
+function transform_assignments(
+	state,
+	local_assignment: boolean,
+	left: { luau.Var | string },
+	right: { luau.Expr }
+): { sq.Stat }
+	local stats = {} :: { sq.Stat }
+
+	for i, lvar in left do
+		local var, expr
+		if typeof(lvar) == "string" then -- local variables are identifiers, not vars
+			var = scope_var(create.var(create.var_nameroot(lvar), {}))
+		else
+			var = transform_var(state, lvar)
+		end
+
+		if right[i] then
+			expr = transform_expr(state, right[i])
+
+			if expr.kind == "exprvar" and can_be_tuple(state, expr.var) then
+				-- could be a tuple
+				if i == #right then
+					-- tuple!
+					local temp_name = unique_id "tuple"
+
+					local vars = {}
+					for j = i, #left do
+						local other_lvar = left[j]
+
+						-- local variables are identifiers, not vars
+						if typeof(lvar) == "string" then
+							other_lvar = scope_var(
+								create.var(create.var_nameroot(lvar), {})
+							)
+						else
+							other_lvar = transform_var(state, lvar)
+						end
+						table.insert(vars, other_lvar)
+					end
+
+					unpack_tuple(state, temp_name, vars, local_assignment)
+
+					-- "local tuple = ...()"
+					table.insert(
+						stats,
+						(create.stat_localvariable(temp_name, expr))
+					)
+
+					return stats
+				else
+					-- function call, not a tuple, so return first element
+					-- TODO evil mutation
+					table.insert(
+						expr.var.suffixes,
+						create.var_exprsuffix(create.int(0))
+					)
+				end
+			end
+		else
+			expr = create.null()
+		end
+
+		if not local_assignment then
+			table.insert(
+				stats,
+				create.stat_expr(create.expr_assignment(var, "=", expr))
+			)
+		else
+			table.insert(
+				stats,
+				create.stat_expr(create.expr_assignment(var, "<-", expr))
+			)
+		end
 	end
 
 	return stats
@@ -170,9 +258,6 @@ function scope_var(var: sq.Var): sq.Var
 			accumulator = wrap_index(accumulator, suffix.expr)
 		elseif suffix.kind == "call" then
 			table.insert(accumulator.suffixes, suffix)
-
-			-- If this isnt a tuple assignment:
-			--  insert [0] index
 		end
 	end
 
@@ -318,77 +403,17 @@ function transform_expr(state, expr: luau.Expr): sq.Expr
 end
 
 function transform_stat(state, stat: luau.Stat): { sq.Stat }
-    -- figure out how to make this work for localvariabes and forin
 	if stat.kind == "assign" then
-		local stats = {} :: { sq.Stat }
+		local left, right = {}, {}
 
-        -- this skips the assignment for "b" in "a, b = 0"
-        -- doesnt affect functionality though
-		for i, pair in stat.right do
-			local expr = transform_expr(state, pair.node)
-
-			if expr.kind == "exprvar" then
-				if #expr.var.suffixes > 0 then
-					if expr.var.suffixes[#expr.var.suffixes].kind == "call" then
-						if
-							i == #stat.right
-                            and #stat.left > i
-							and expr.var.root.kind == "name"
-						then
-							-- function call as the last var, can assign multiple!
-
-							local temp_name = unique_id "tuple"
-
-							local vars = {}
-							for j = i, #stat.left do
-								local leftvar =
-									transform_var(state, stat.left[j].node)
-
-								table.insert(vars, leftvar)
-							end
-
-							unpack_tuple(state, temp_name, vars, false)
-
-							-- tuple_result = expr()
-							table.insert(
-								stats,
-								(create.stat_localvariable(temp_name, expr))
-							)
-
-							continue
-						elseif stat.left[i] then
-							local var = transform_var(state, stat.left[i].node)
-							-- function call that isnt a tuple or is wrapped in parens
-							--
-							-- index first element of tuple
-							table.insert(
-								expr.var.suffixes,
-								create.var_exprsuffix(create.int(0))
-							)
-
-							table.insert(
-								stats,
-								create.stat_expr(
-									create.expr_assignment(var, "=", expr)
-								)
-							)
-
-							continue
-						end
-					end
-				end
-			end
-
-			-- anything else
-			if stat.left[i] then
-				local var = transform_var(state, stat.left[i].node)
-				table.insert(
-					stats,
-					create.stat_expr(create.expr_assignment(var, "=", expr))
-				)
-			end
+		for _, pair in stat.left do
+			table.insert(left, pair.node)
 		end
-		return stats
+		for _, pair in stat.right do
+			table.insert(right, pair.node)
+		end
+
+		return transform_assignments(state, true, left, right)
 	elseif stat.kind == "compoundassign" then
 		local var = transform_var(state, stat.left)
 		local expr = transform_expr(state, stat.right)
@@ -480,33 +505,81 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 			),
 		}
 	elseif stat.kind == "forin" then
+		local left, right = {}, {}
+
+		for _, pair in stat.bindings do
+			table.insert(left, pair.node.name.text)
+		end
+		for _, pair in stat.exprs do
+			table.insert(right, pair.node)
+		end
+
+		-- idfk
+		-- transform_assignments might need to be separated
+
 		return {
 			-- create.stat_foreach(i_id, v_id, expr, block)
 		}
 	elseif stat.kind == "localvariable" then
-		local stats = {} :: { sq.Stat }
+		local left, right = {}, {}
 
-		for i, binding in stat.bindings do
-			local ident, value = binding.node.name.text, nil
-			if stat.values and stat.values.exprs[i] then
-				value = transform_expr(state, stat.values.exprs[i].node)
-			else
-				value = create.null()
+		for _, pair in stat.bindings do
+			table.insert(left, pair.node.name.text)
+		end
+		if stat.values then
+			for _, pair in stat.values.exprs do
+				table.insert(right, pair.node)
 			end
-
-			local var = create.var(
-				create.var_nameroot(SCOPE_TABLE_ROOT),
-				{ create.var_namesuffix(ident) }
-			)
-
-			table.insert(
-				stats,
-				create.stat_expr(create.expr_assignment(var, "<-", value))
-			)
 		end
 
-		return stats
+		return transform_assignments(state, true, left, right)
 	elseif stat.kind == "function" then
+		-- function a.b.c:method()
+		-- a.b.c.method <- function(self)
+
+		if #stat.names > 0 then
+			-- assignment
+			local root, suffixes = nil, {}
+			for i, pair in stat.names do
+				local node = pair.node
+				if not root then
+					root = create.var_nameroot(node.text)
+				else
+					table.insert(suffixes, create.var_namesuffix(node.text))
+				end
+			end
+			local var = scope_var(create.var(root, suffixes))
+
+            --local func = create.expr_function()
+            --TODO
+            local func = nil
+
+            return create.stat_expr(create.expr_assignment(var, "<-", func))
+		else
+			-- statement
+            
+            local name = stat.names[1].node.text
+            local method = if stat.method then stat.method.name else nil
+            local params = {}
+
+            if method then
+                table.insert(params, "self")
+            end
+
+            for _, pair in stat.body.params do
+                table.insert(params, pair.node.name)
+            end
+
+            local block = transform_block(state, stat.body.block)
+
+            --TODO varargs
+
+            return create.stat_function(name, method, params, {}, block)
+		end
+    elseif stat.kind == "typefunction" then
+        return {}
+    elseif stat.kind == "type" then
+        return {}
 	end
 	return {}
 end
