@@ -14,15 +14,19 @@
 --
 -- a = (a);
 -- a = (0)
-
+--
 -- a, b, c = x()
 -- d, e = x(), 0, 1
 --
 -- a = x()
 -- a, b = (x())
-local a, b = 1
-local a, b = x()
-a = 1, 2
-a, b = 3
-
+-- local a, b = 1
+-- local a, b = x()
+-- a = 1, 2
+-- a, b = 3
+--
 -- a, b,c = 0, x()
+--
+-- a = true
+
+local function test() end

@@ -12,8 +12,20 @@ local function unshift<T>(destination: { T }, value: { T })
 	table.move(value, 1, #value, 1, destination)
 end
 
-function transform_cst(state, cst: luau.Cst)
-	local block = transform_block(state, cst.block)
+local prereqs_stack = {}
+local function capture<T>(callback: () -> T): (T, { sq.Stat })
+	table.insert(prereqs_stack, {})
+	local ret = callback()
+	local popped = table.remove(prereqs_stack, #prereqs_stack)
+	return ret, popped
+end
+
+local function prereq(stat: sq.Stat)
+	table.insert(prereqs_stack[#prereqs_stack], stat)
+end
+
+function transform_cst(cst: luau.Cst): sq.Block
+	local block = transform_block(cst.block)
 
 	-- this is done so the first scope creation doesnt error
 	unshift(
@@ -23,10 +35,10 @@ function transform_cst(state, cst: luau.Cst)
 	-- insert index helper function here
 	-- parse a new luau cst here to get it idc i wouldnt wanna type it out
 
-	return block.stats
+	return block
 end
 
-function transform_block(state, block: luau.Block)
+function transform_block(block: luau.Block)
 	local stats = {
 		(create.stat_localvariable(
 			SCOPE_TABLE_ROOT,
@@ -43,44 +55,62 @@ function transform_block(state, block: luau.Block)
 	for _, pair in block.stats do
 		local stat = pair.node
 
-		for _, poststat in state.postreqs do
-			table.insert(stats, poststat)
-		end
-		table.clear(state.postreqs)
-
-		local result = transform_stat(state, stat)
+		local result, captured = capture(function()
+			return transform_stat(stat)
+		end)
 
 		for _, v in result do
+			table.insert(stats, v)
+		end
+		for _, v in captured do
+			table.insert(stats, v)
+		end
+	end
+
+	local last_stat
+	if block.last_stat then
+		local stat, captured = capture(function()
+			return transform_laststat(block.last_stat.stat)
+		end)
+
+		last_stat = stat
+
+		for _, v in captured do
 			table.insert(stats, v)
 		end
 	end
 
 	return {
 		stats = stats,
+		last_stat = last_stat,
 	} :: sq.Block
 end
 
-function transform_functionarg(state, arg: luau.FunctionArg): { sq.Expr }
+function transform_functionarg(arg: luau.FunctionArg): { sq.Expr }
 	if arg.kind == "pack" then
 		local exprs = {}
 		for _, pair in arg.exprs do
-			table.insert(exprs, transform_expr(state, pair.node))
+			table.insert(exprs, transform_expr(pair.node))
 		end
 		return exprs
 	elseif arg.kind == "string" then
-		return { create.string(arg.tok.text) }
+		return { create.string(trim_string(arg.tok.text)) }
 	elseif arg.kind == "table" then
 		local table_expr =
 			{ kind = "table", table = arg.table } :: luau.Expr_Table
-		return { transform_expr(state, table_expr) }
+		return { transform_expr(table_expr) }
 	end
 	error ""
 end
 
-function wrap_index(var: sq.Expr, index: sq.Expr)
+function trim_string(str: string)
+    return string.sub(str, 2, #str - 1)
+end
+
+function wrap_index(var: sq.Var, index: sq.Expr)
 	return create.var(create.var_nameroot(INDEX_FUNC), {
 		create.var_callsuffix(nil, {
-			var,
+			create.expr_var(var),
 			index,
 		}),
 	})
@@ -109,7 +139,7 @@ function unique_id(ident: sq.Identifier)
 	return ident
 end
 
-function can_be_tuple(state, var: sq.Var): boolean
+function can_be_tuple(var: sq.Var): boolean
 	if #var.suffixes == 0 then
 		return false
 	end
@@ -120,7 +150,6 @@ function can_be_tuple(state, var: sq.Var): boolean
 end
 
 function unpack_tuple(
-	state,
 	tuple: sq.Identifier,
 	vars: { sq.Var },
 	local_variable: boolean
@@ -130,9 +159,11 @@ function unpack_tuple(
 	for i, var in vars do
 		local assignment
 
-		local value = create.var(
-			create.var_nameroot(tuple),
-			{ create.var_exprsuffix(create.int(i - 1)) }
+		local value = create.expr_var(
+			create.var(
+				create.var_nameroot(tuple),
+				{ create.var_exprsuffix(create.int(i - 1)) }
+			)
 		)
 
 		if local_variable then
@@ -143,7 +174,6 @@ function unpack_tuple(
 				create.stat_expr(create.expr_assignment(var, "=", value))
 		end
 
-		table.insert(state.postreqs, assignment)
 		table.insert(stats, assignment)
 	end
 
@@ -151,7 +181,6 @@ function unpack_tuple(
 end
 
 function transform_assignments(
-	state,
 	local_assignment: boolean,
 	left: { luau.Var | string },
 	right: { luau.Expr }
@@ -163,13 +192,13 @@ function transform_assignments(
 		if typeof(lvar) == "string" then -- local variables are identifiers, not vars
 			var = scope_var(create.var(create.var_nameroot(lvar), {}))
 		else
-			var = transform_var(state, lvar)
+			var = transform_var(lvar)
 		end
 
 		if right[i] then
-			expr = transform_expr(state, right[i])
+			expr = transform_expr(right[i])
 
-			if expr.kind == "exprvar" and can_be_tuple(state, expr.var) then
+			if expr.kind == "exprvar" and can_be_tuple(expr.var) then
 				-- could be a tuple
 				if i == #right then
 					-- tuple!
@@ -180,23 +209,28 @@ function transform_assignments(
 						local other_lvar = left[j]
 
 						-- local variables are identifiers, not vars
-						if typeof(lvar) == "string" then
+						if typeof(other_lvar) == "string" then
 							other_lvar = scope_var(
-								create.var(create.var_nameroot(lvar), {})
+								create.var(create.var_nameroot(other_lvar), {})
 							)
 						else
-							other_lvar = transform_var(state, lvar)
+							other_lvar = transform_var(other_lvar)
 						end
 						table.insert(vars, other_lvar)
 					end
 
-					unpack_tuple(state, temp_name, vars, local_assignment)
+					local assignments =
+						unpack_tuple(temp_name, vars, local_assignment)
 
 					-- "local tuple = ...()"
 					table.insert(
 						stats,
 						(create.stat_localvariable(temp_name, expr))
 					)
+
+					for _, stat in assignments do
+						table.insert(stats, stat)
+					end
 
 					return stats
 				else
@@ -264,12 +298,12 @@ function scope_var(var: sq.Var): sq.Var
 	return accumulator
 end
 
-function transform_var(state, var: luau.Var): sq.Var
+function transform_var(var: luau.Var): sq.Var
 	local root, suffixes = nil, {}
 	if var.root.kind == "name" then
 		root = create.var_nameroot(var.root.tok.text)
 	else
-		local expr = transform_expr(state, var.root.expr)
+		local expr = transform_expr(var.root.expr)
 
 		-- (x()) needs to become (x()[0]) because it wont be done in assignments
 		if expr.kind == "exprvar" then
@@ -298,7 +332,7 @@ function transform_var(state, var: luau.Var): sq.Var
 			table.insert(suffixes, create.var_exprsuffix(suffix.name))
 		else
 			local method = if suffix.method then suffix.method.name else nil
-			local args = transform_functionarg(state, suffix.arg)
+			local args = transform_functionarg(suffix.arg)
 
 			table.insert(suffixes, create.var_callsuffix(method, args))
 		end
@@ -309,67 +343,77 @@ function transform_var(state, var: luau.Var): sq.Var
 	return scope_var(sqvar)
 end
 
-function transform_expr(state, expr: luau.Expr): sq.Expr
+function transform_expr(expr: luau.Expr): sq.Expr
 	if expr.kind == "nil" then
 		return create.null()
 	elseif expr.kind == "boolean" then
 		local bool = if expr.tok.kind == "true" then true else false
 		return create.bool(bool)
 	elseif expr.kind == "number" then
-		local num = tonumber(expr.tok.text)
+		local text = string.gsub(expr.tok.text, "_", "")
+		local num = tonumber(text)
+
+		if not num then
+			if string.find(string.lower(text), "^0b") then
+				local binary = string.reverse(string.sub(text, 3, #text))
+				num = tonumber(binary, 2)
+			elseif string.find(string.lower(text), "^0x") then
+				local hex = string.reverse(string.sub(text, 3, #text))
+				num = tonumber(hex, 16)
+			end
+		end
+
 		if string.find(num, "%D") then
 			return create.float(num)
 		else
 			return create.int(num)
 		end
 	elseif expr.kind == "string" then
-		return create.string(expr.tok.text)
+		return create.string(trim_string(expr.tok.text))
 	elseif expr.kind == "varargs" then
-		error ""
+		--error ""
+		return create.null()
 	elseif expr.kind == "istring" then
 		if expr.istring.kind == "simple" then
-			return create.string(expr.istring.tok.text)
+			return create.string(trim_string(expr.istring.tok.text))
 		else
 			local exprs = {} :: { sq.Expr }
 
 			for _, pair in expr.istring.middle do
 				local node, sep = pair.node, pair.sep
-				table.insert(exprs, transform_expr(state, node))
+				table.insert(exprs, transform_expr(node))
 				if sep then
 					table.insert(
 						exprs,
-						create.string(string.sub(sep.text, 2, #sep.text - 1))
+						create.string(trim_string(sep.text))
 					)
 				end
 			end
 
-			local accumulator = create.string(expr.istring.first.text)
+			local accumulator = create.string(trim_string(expr.istring.first.text))
 			for _, expr in exprs do
 				accumulator = create.binary(accumulator, "+", expr)
 			end
 			accumulator = create.binary(
 				accumulator,
 				"+",
-				create.string(expr.istring.last.text)
+				create.string(trim_string(expr.istring.last.text))
 			)
 
 			return accumulator
 		end
 	elseif expr.kind == "var" then
-		return create.expr_var(transform_var(state, expr.var))
+		return create.expr_var(transform_var(expr.var))
 	elseif expr.kind == "assertion" then
-		return transform_expr(state, expr.expr)
+		return transform_expr(expr.expr)
 	elseif expr.kind == "unary" then
 		local op = expr.operator.kind
 		if op == "#" then
 			return create.expr_var(
-				create.var(
-					create.var_parenroot(transform_expr(state, expr.expr)),
-					{
-						create.var_namesuffix "len",
-						create.var_callsuffix(nil, {}),
-					}
-				)
+				create.var(create.var_parenroot(transform_expr(expr.expr)), {
+					create.var_namesuffix "len",
+					create.var_callsuffix(nil, {}),
+				})
 			)
 		elseif op == "not" then
 			op = "!"
@@ -377,10 +421,10 @@ function transform_expr(state, expr: luau.Expr): sq.Expr
 			error "???"
 		end
 
-		return create.unary(transform_expr(state, expr.expr), op)
+		return create.unary(transform_expr(expr.expr), op)
 	elseif expr.kind == "binary" then
 		local left, right =
-			transform_expr(state, expr.left), transform_expr(state, expr.right)
+			transform_expr(expr.left), transform_expr(expr.right)
 
 		local op = expr.operator.kind
 		if op == ".." then
@@ -398,11 +442,77 @@ function transform_expr(state, expr: luau.Expr): sq.Expr
 		end
 
 		return create.binary(left, op, right)
+	elseif expr.kind == "table" then
+		local fields = {} :: { sq.TableField }
+		local tbl = expr.table
+
+		local nokeys = 0
+		for _, pair in tbl.fields do
+			local field = pair.node
+			if field.kind == "namekey" then
+				table.insert(
+					fields,
+					create.table_namekey(
+						field.name.text,
+						transform_expr(field.value)
+					)
+				)
+			elseif field.kind == "exprkey" then
+				table.insert(
+					fields,
+					create.table_exprkey(
+						transform_expr(field.key),
+						transform_expr(field.value)
+					)
+				)
+				-- TODO figure out tuples
+			else
+				nokeys += 1
+				table.insert(
+					fields,
+					create.table_exprkey(
+						create.int(nokeys),
+						transform_expr(field.value)
+					)
+				)
+			end
+		end
+
+		return create.expr_table(fields)
+	elseif expr.kind == "ifelse" then
+		local accumulator
+		for i = #expr.branches, 1, -1 do
+			local branch = expr.branches[i].node
+			if not accumulator then
+				accumulator = create.expr_ternary(
+					transform_expr(branch.condition),
+					transform_expr(branch.body),
+					transform_expr(expr.else_body)
+				)
+			else
+				accumulator = create.expr_ternary(
+					transform_expr(branch.condition),
+					transform_expr(branch.body),
+					accumulator
+				)
+			end
+		end
+		return accumulator
+	elseif expr.kind == "function" then
+		local params = {}
+		for _, pair in expr.body.params do
+			table.insert(params, pair.node.name.text)
+		end
+
+		local func =
+			create.expr_function(params, {}, transform_block(expr.body.block))
+
+		return func
 	end
 	error("unknown expr: " .. expr.kind)
 end
 
-function transform_stat(state, stat: luau.Stat): { sq.Stat }
+function transform_stat(stat: luau.Stat): { sq.Stat }
 	if stat.kind == "assign" then
 		local left, right = {}, {}
 
@@ -413,10 +523,10 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 			table.insert(right, pair.node)
 		end
 
-		return transform_assignments(state, true, left, right)
+		return transform_assignments(true, left, right)
 	elseif stat.kind == "compoundassign" then
-		local var = transform_var(state, stat.left)
-		local expr = transform_expr(state, stat.right)
+		local var = transform_var(stat.left)
+		local expr = transform_expr(stat.right)
 		local op = stat.operator.kind
 
 		if op == "//=" then
@@ -434,24 +544,25 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 		return { create.stat_expr(create.expr_assignment(var, op, expr)) }
 	elseif stat.kind == "call" then
 		return {
-			create.stat_expr(create.expr_var(transform_var(state, stat.call))),
+			create.stat_expr(create.expr_var(transform_var(stat.call))),
 		}
 	elseif stat.kind == "do" then
 		-- maybe an anonymous function
 		-- or dowhile with false condition
+		-- TODO
 		return {}
 	elseif stat.kind == "while" then
 		return {
 			create.stat_while(
-				transform_expr(state, stat.condition),
-				transform_block(state, stat.block)
+				transform_expr(stat.condition),
+				transform_block(stat.block)
 			),
 		}
 	elseif stat.kind == "repeat" then
 		local expr = create.unary(
 			create.expr_var(
 				create.var(
-					create.var_parenroot(transform_expr(state, stat.condition)),
+					create.var_parenroot(transform_expr(stat.condition)),
 					{}
 				)
 			),
@@ -459,7 +570,7 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 		)
 
 		return {
-			create.stat_dowhile(transform_block(state, stat.block), expr),
+			create.stat_dowhile(transform_block(stat.block), expr),
 		}
 	elseif stat.kind == "if" then
 		local branches, else_block = {} :: { sq.IfStatBranch }, nil
@@ -467,13 +578,13 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 		for _, pair in stat.branches do
 			local branch = pair.node
 			table.insert(branches, {
-				condition = transform_expr(state, branch.condition),
-				block = transform_block(state, branch.block),
+				condition = transform_expr(branch.condition),
+				block = transform_block(branch.block),
 			})
 		end
 
 		if stat.else_branch then
-			else_block = stat.else_branch.block
+			else_block = transform_block(stat.else_branch.block)
 		end
 
 		return { create.stat_if(branches, else_block) }
@@ -482,23 +593,23 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 		-- create binary operator
 		-- create +=
 		local var_name, start_value =
-			stat.binding.name.text, transform_expr(state, stat.start_expr)
-		local cond = transform_expr(state, stat.end_expr)
+			stat.binding.name.text, transform_expr(stat.start_expr)
+		local cond = transform_expr(stat.end_expr)
 		local incr_amount = if stat.step
-			then transform_expr(state, stat.step.expr)
+			then transform_expr(stat.step.expr)
 			else nil
 
-		-- create.localvariable should return a var as well
-
-		local init, var = create.stat_localvariable(var_name, start_value)
+		--local init, var = create.stat_localvariable(var_name, start_value)
+		local var = scope_var(create.var(create.var_nameroot(var_name), {}))
+		local init = create.expr_assignment(var, "<-", start_value)
 		local expr_var = create.expr_var(var)
 
 		local cond_expr = create.binary(expr_var, ">=", cond)
-		local incr_expr = create.expr_assignment(expr_var, "+=", incr_amount)
+		local incr_expr = create.expr_assignment(var, "+=", incr_amount)
 
 		return {
 			create.stat_for(
-				transform_block(state, stat.block),
+				transform_block(stat.block),
 				init,
 				cond_expr,
 				incr_expr
@@ -532,12 +643,12 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 			end
 		end
 
-		return transform_assignments(state, true, left, right)
+		return transform_assignments(true, left, right)
 	elseif stat.kind == "function" then
 		-- function a.b.c:method()
 		-- a.b.c.method <- function(self)
 
-		if #stat.names > 0 then
+		if #stat.names > 1 then
 			-- assignment
 			local root, suffixes = nil, {}
 			for i, pair in stat.names do
@@ -548,40 +659,94 @@ function transform_stat(state, stat: luau.Stat): { sq.Stat }
 					table.insert(suffixes, create.var_namesuffix(node.text))
 				end
 			end
+
+			local params = {}
+			for _, pair in stat.body.params do
+				table.insert(params, pair.node.name.text)
+			end
+
+			local func = create.expr_function(
+				params,
+				{},
+				transform_block(stat.body.block)
+			)
+
 			local var = scope_var(create.var(root, suffixes))
-
-            --local func = create.expr_function()
-            --TODO
-            local func = nil
-
-            return create.stat_expr(create.expr_assignment(var, "<-", func))
+            -- index(a, "b") <- func
+            -- doesnt work ofc
+			return { create.stat_expr(create.expr_assignment(var, "<-", func)) }
 		else
 			-- statement
-            
-            local name = stat.names[1].node.text
-            local method = if stat.method then stat.method.name else nil
-            local params = {}
 
-            if method then
-                table.insert(params, "self")
-            end
+			local name = stat.names[1].node.text
+			local method = if stat.method then stat.method.name.text else nil
+			local params = {}
 
-            for _, pair in stat.body.params do
-                table.insert(params, pair.node.name)
-            end
+			if method then
+				table.insert(params, "self")
+			end
 
-            local block = transform_block(state, stat.body.block)
+			for _, pair in stat.body.params do
+				table.insert(params, pair.node.name.text)
+			end
 
-            --TODO varargs
+			local block = transform_block(stat.body.block)
 
-            return create.stat_function(name, method, params, {}, block)
+			--TODO varargs
+
+			return {
+				create.stat_function(
+					name,
+					method,
+					params,
+					{ SCOPE_TABLE_ROOT },
+					block
+				),
+			}
 		end
-    elseif stat.kind == "typefunction" then
-        return {}
-    elseif stat.kind == "type" then
-        return {}
+	elseif stat.kind == "localfunction" then
+		local params = {}
+		for _, pair in stat.body.params do
+			table.insert(params, pair.node.name.text)
+		end
+
+		local func = create.expr_function(
+			params,
+			{ SCOPE_TABLE_ROOT },
+			transform_block(stat.body.block)
+		)
+
+		local var =
+			scope_var(create.var(create.var_nameroot(stat.name.text), {}))
+		return { create.stat_expr(create.expr_assignment(var, "<-", func)) }
+	elseif stat.kind == "typefunction" then
+		return {}
+	elseif stat.kind == "type" then
+		return {}
 	end
-	return {}
+	error("unknown stat: " .. stat.kind)
+end
+
+function transform_laststat(stat: luau.LastStat): sq.LastStat
+	if stat.kind == "return" then
+		local exprs = {}
+
+		for i, pair in stat.exprs do
+			local localvarstat, var = create.stat_localvariable(
+				unique_id("return_" .. i),
+				transform_expr(pair.node)
+			)
+
+			table.insert(exprs, create.expr_var(var))
+			prereq(localvarstat)
+		end
+
+		return create.lstat_return(create.expr_array(exprs))
+	elseif stat.kind == "break" then
+		return create.lstat_break()
+	else
+		return create.lstat_continue()
+	end
 end
 
 return {

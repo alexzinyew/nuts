@@ -137,7 +137,7 @@ function create.stat_for(
 ): sq.StatFor
 	return {
 		kind = "for",
-		init_expr = init,
+		init = init,
 		cond_expr = cond,
 		incr_expr = incr,
 		block = block,
@@ -179,16 +179,79 @@ function create.stat_function(
 	method: sq.Identifier?,
 	params: { sq.Identifier },
 	free_vars: { sq.Identifier }?,
-    block: sq.Block
+	block: sq.Block
 ): sq.StatFunction
+	return {
+		kind = "function",
+		root = name,
+		method = method,
+		parameters = params,
+		free_variables = free_vars,
+		block = block,
+	}
+end
+
+function create.expr_function(
+    params: { sq.Identifier },
+    free_vars: { sq.Identifier }?,
+    block: sq.Block
+): sq.ExprFunction
+	return {
+		kind = "exprfunction",
+		parameters = params,
+		free_variables = free_vars,
+		block = block,
+	}
+end
+
+function create.expr_table(fields: { sq.TableField }): sq.ExprTable
+	return {
+		kind = "exprtable",
+		fields = fields,
+	}
+end
+
+function create.table_namekey(
+	key: sq.Identifier,
+	expr: sq.Expr
+): sq.TableNameKey
+	return { kind = "namekey", key = key, expr = expr }
+end
+
+function create.table_exprkey(key: sq.Expr, expr: sq.Expr): sq.TableExprKey
+	return { kind = "exprkey", key = key, expr = expr }
+end
+
+function create.expr_array(values: { sq.Expr }): sq.ExprArray
+	return { kind = "exprarray", values = values }
+end
+
+function create.expr_ternary(
+	cond: sq.Expr,
+	then_expr: sq.Expr,
+	else_expr: sq.Expr
+): sq.ExprTernary
+	return {
+		kind = "exprternary",
+		condition = cond,
+		then_expr = then_expr,
+		else_expr = else_expr,
+	}
+end
+
+function create.lstat_return(expr: sq.Expr): sq.LastStatReturn
     return {
-        kind = "function",
-        root = name,
-        method = method,
-        parameters = params,
-        free_variables = free_vars,
-        block = block
+        kind = "return",
+        expr = expr
     }
+end
+
+function create.lstat_break(): sq.LastStatBreak
+    return { kind = "break" }
+end
+
+function create.lstat_continue(): sq.LastStatContinue
+    return { kind = "continue" }
 end
 
 return create

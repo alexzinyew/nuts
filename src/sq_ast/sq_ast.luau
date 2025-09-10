@@ -15,19 +15,14 @@ export type Stat =
 	| StatEnum
 	| StatExpr
 
-export type LastStat =
-    LastStatReturn
-    | LastStatBreak
-    | LastStatContinue
+export type LastStat = LastStatReturn | LastStatBreak | LastStatContinue
 
 export type Expr =
 	ExprGlobal
 	| ExprAssignment
-	| ExprNewSlot
 	| ExprTernary
 	| ExprBinary
 	| ExprUnary
-	| ExprBitwise
 	| ExprIncDec
 	| ExprIn
 	| ExprInstanceOf
@@ -80,8 +75,10 @@ export type ExprString = { kind: "string", string: number }
 export type ExprBool = { kind: "bool", bool: boolean }
 export type ExprNull = { kind: "null" }
 
+export type BitwiseOperator = "<<" | ">>" | ">>>" | "&" | "^" | "|"
 export type BinaryOperator =
-	"+"
+	BitwiseOperator
+	| "+"
 	| "-"
 	| "*"
 	| "/"
@@ -90,15 +87,13 @@ export type BinaryOperator =
 	| "!="
 	| "<="
 	| ">="
-    | "||"
-    | "&&"
+	| "||"
+	| "&&"
 
-export type UnaryOperator = "-" | "!" | "~"
+export type UnaryOperator = "-" | "!" | "~" | "++" | "--"
 
 export type CompoundOperator = "+=" | "-=" | "*=" | "/=" | "%="
 export type AssignmentOperator = "<-" | "=" | CompoundOperator
-
-export type BitwiseOperator = "<<" | ">>" | ">>>" | "&" | "^" | "|"
 
 export type IfStatBranch = {
 	condition: Expr,
@@ -120,7 +115,7 @@ export type StatWhile = {
 export type StatDoWhile = {
 	kind: "dowhile",
 	block: Block,
-	condition: Block,
+	condition: Expr,
 }
 
 export type StatSwitch = {
@@ -135,7 +130,7 @@ export type StatSwitch = {
 
 export type StatFor = {
 	kind: "for",
-	init_expr: Expr | StatLocalAssignment?,
+	init: Expr | StatLocalAssignment?,
 	cond_expr: Expr?,
 	incr_expr: Expr?,
 	block: Block,
@@ -149,12 +144,6 @@ export type StatForEach = {
 	block: Block,
 }
 
-
-export type StatReturn = {
-	kind: "return",
-	expr: Expr,
-}
-
 export type StatYield = {
 	kind: "yield",
 	expr: Expr,
@@ -162,8 +151,8 @@ export type StatYield = {
 
 export type StatLocalAssignment = {
 	kind: "localassignment",
-    ident: Identifier,
-    expr: Expr,
+	ident: Identifier,
+	expr: Expr,
 }
 
 export type StatFunction = {
@@ -236,8 +225,8 @@ export type StatExpr = {
 }
 
 export type LastStatReturn = {
-    kind: "return",
-    expr: Expr?,
+	kind: "return",
+	expr: Expr?,
 }
 
 export type LastStatBreak = {
@@ -261,12 +250,6 @@ export type ExprAssignment = {
 	value: Expr,
 }
 
-export type ExprNewSlot = {
-	kind: "exprnewslot",
-	var: Var,
-	value: Expr,
-}
-
 export type ExprTernary = {
 	kind: "exprternary",
 	condition: Expr,
@@ -278,20 +261,13 @@ export type ExprBinary = {
 	kind: "exprbinary",
 	left: Expr,
 	operator: BinaryOperator,
-	right: Expr?,
+	right: Expr,
 }
 
 export type ExprUnary = {
 	kind: "exprunary",
 	operator: UnaryOperator,
 	expr: Expr,
-}
-
-export type ExprBitwise = {
-	kind: "exprbitwise",
-	left: Expr,
-	operator: BitwiseOperator,
-	right: Expr,
 }
 
 export type ExprIncDec = {
@@ -323,19 +299,23 @@ export type ExprComma = {
 	right: Expr,
 }
 
+export type TableNameKey = {
+	kind: "namekey",
+	key: Identifier,
+	expr: Expr,
+}
+
+export type TableExprKey = {
+	kind: "exprkey",
+	key: Expr,
+	expr: Expr,
+}
+
+export type TableField = TableNameKey | TableExprKey
+
 export type ExprTable = {
 	kind: "exprtable",
-	fields: {
-		{
-			kind: "namekey",
-			key: Identifier,
-			expr: Expr,
-		} | {
-			kind: "exprkey",
-			key: Expr,
-			expr: Expr,
-		}
-	},
+	fields: { TableField },
 }
 
 export type ExprFunction = {
@@ -374,7 +354,7 @@ export type ExprVar = {
 -- normally, blocks are statements but i dont care so most stats are blocks
 export type Block = {
 	stats: { Stat },
-    last_stat: LastStat?
+	last_stat: LastStat?,
 }
 
 return nil
