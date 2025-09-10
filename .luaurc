@@ -1,0 +1,8 @@
+{
+    "languageMode": "strict",
+    "aliases": {
+        "src": "./src",
+        "luaup": "./luaup",
+        "vendor": "./vendor"
+    }
+}
