@@ -17,7 +17,7 @@ local function capture<T>(callback: () -> T): (T, { sq.Stat })
 	table.insert(prereqs_stack, {})
 	local ret = callback()
 	local popped = table.remove(prereqs_stack, #prereqs_stack)
-	return ret, popped
+	return ret, popped :: any
 end
 
 local function prereq(stat: sq.Stat)
@@ -50,7 +50,7 @@ function transform_block(block: luau.Block)
 				}),
 			}))
 		)),
-	}
+	} :: { sq.Stat }
 
 	for _, pair in block.stats do
 		local stat = pair.node
@@ -104,7 +104,7 @@ function transform_functionarg(arg: luau.FunctionArg): { sq.Expr }
 end
 
 function trim_string(str: string)
-    return string.sub(str, 2, #str - 1)
+	return string.sub(str, 2, #str - 1)
 end
 
 function wrap_index(var: sq.Var, index: sq.Expr)
@@ -192,7 +192,7 @@ function transform_assignments(
 		if typeof(lvar) == "string" then -- local variables are identifiers, not vars
 			var = scope_var(create.var(create.var_nameroot(lvar), {}))
 		else
-			var = transform_var(lvar)
+			var = transform_var(lvar, true)
 		end
 
 		if right[i] then
@@ -206,15 +206,15 @@ function transform_assignments(
 
 					local vars = {}
 					for j = i, #left do
-						local other_lvar = left[j]
+						local leftv, other_lvar = left[j], nil
 
 						-- local variables are identifiers, not vars
-						if typeof(other_lvar) == "string" then
+						if typeof(leftv) == "string" then
 							other_lvar = scope_var(
-								create.var(create.var_nameroot(other_lvar), {})
+								create.var(create.var_nameroot(leftv), {})
 							)
 						else
-							other_lvar = transform_var(other_lvar)
+							other_lvar = transform_var(leftv)
 						end
 						table.insert(vars, other_lvar)
 					end
@@ -286,8 +286,7 @@ function scope_var(var: sq.Var): sq.Var
 
 	for _, suffix in var.suffixes do
 		if suffix.kind == "nameindex" then
-			accumulator =
-				wrap_index(accumulator, create.string(suffix.name.text))
+			accumulator = wrap_index(accumulator, create.string(suffix.name))
 		elseif suffix.kind == "exprindex" then
 			accumulator = wrap_index(accumulator, suffix.expr)
 		elseif suffix.kind == "call" then
@@ -298,7 +297,10 @@ function scope_var(var: sq.Var): sq.Var
 	return accumulator
 end
 
-function transform_var(var: luau.Var): sq.Var
+function transform_var(var: luau.Var, assignment: boolean?): sq.Var
+	--TODO only index 0 of a function call if its not an assignment
+	-- this assignment parameter will not work for exprvars in an assignment!
+    -- figure something else out!
 	local root, suffixes = nil, {}
 	if var.root.kind == "name" then
 		root = create.var_nameroot(var.root.tok.text)
@@ -327,15 +329,28 @@ function transform_var(var: luau.Var): sq.Var
 
 	for _, suffix in var.suffixes do
 		if suffix.kind == "nameindex" then
-			table.insert(suffixes, create.var_namesuffix(suffix.name))
+			table.insert(suffixes, create.var_namesuffix(suffix.name.text))
 		elseif suffix.kind == "exprindex" then
-			table.insert(suffixes, create.var_exprsuffix(suffix.name))
+			table.insert(
+				suffixes,
+				create.var_exprsuffix(transform_expr(suffix.expr))
+			)
 		else
-			local method = if suffix.method then suffix.method.name else nil
+			local method = if suffix.method
+				then suffix.method.name.text
+				else nil
 			local args = transform_functionarg(suffix.arg)
 
 			table.insert(suffixes, create.var_callsuffix(method, args))
 		end
+	end
+
+	if
+		not assignment
+		and #suffixes > 0
+		and suffixes[#suffixes].kind == "call"
+	then
+		table.insert(suffixes, create.var_exprsuffix(create.int(0)))
 	end
 
 	local sqvar = create.var(root, suffixes)
@@ -363,7 +378,9 @@ function transform_expr(expr: luau.Expr): sq.Expr
 			end
 		end
 
-		if string.find(num, "%D") then
+		assert(num)
+
+		if string.find(tostring(num), "%D") then
 			return create.float(num)
 		else
 			return create.int(num)
@@ -383,14 +400,12 @@ function transform_expr(expr: luau.Expr): sq.Expr
 				local node, sep = pair.node, pair.sep
 				table.insert(exprs, transform_expr(node))
 				if sep then
-					table.insert(
-						exprs,
-						create.string(trim_string(sep.text))
-					)
+					table.insert(exprs, create.string(trim_string(sep.text)))
 				end
 			end
 
-			local accumulator = create.string(trim_string(expr.istring.first.text))
+			local accumulator: any =
+				create.string(trim_string(expr.istring.first.text))
 			for _, expr in exprs do
 				accumulator = create.binary(accumulator, "+", expr)
 			end
@@ -421,7 +436,7 @@ function transform_expr(expr: luau.Expr): sq.Expr
 			error "???"
 		end
 
-		return create.unary(transform_expr(expr.expr), op)
+		return create.unary(transform_expr(expr.expr), op :: any)
 	elseif expr.kind == "binary" then
 		local left, right =
 			transform_expr(expr.left), transform_expr(expr.right)
@@ -441,7 +456,7 @@ function transform_expr(expr: luau.Expr): sq.Expr
 			return pow(left, right)
 		end
 
-		return create.binary(left, op, right)
+		return create.binary(left, op :: any, right)
 	elseif expr.kind == "table" then
 		local fields = {} :: { sq.TableField }
 		local tbl = expr.table
@@ -525,32 +540,34 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 
 		return transform_assignments(true, left, right)
 	elseif stat.kind == "compoundassign" then
-		local var = transform_var(stat.left)
+		local var = transform_var(stat.left, true)
 		local expr = transform_expr(stat.right)
 		local op = stat.operator.kind
 
 		if op == "//=" then
-			local floored = floor_div(var, expr)
+			local floored = floor_div(create.expr_var(var), expr)
 			return {
 				create.stat_expr(create.expr_assignment(var, "=", floored)),
 			}
 		elseif op == "^=" then
-			local powed = pow(var, expr)
+			local powed = pow(create.expr_var(var), expr)
 			return { create.stat_expr(create.expr_assignment(var, "=", powed)) }
 		elseif op == "..=" then
 			op = "+"
 		end
 
-		return { create.stat_expr(create.expr_assignment(var, op, expr)) }
+		return { create.stat_expr(create.expr_assignment(var, op :: any, expr)) }
 	elseif stat.kind == "call" then
 		return {
 			create.stat_expr(create.expr_var(transform_var(stat.call))),
 		}
 	elseif stat.kind == "do" then
-		-- maybe an anonymous function
-		-- or dowhile with false condition
-		-- TODO
-		return {}
+		return {
+			create.stat_dowhile(
+				transform_block(stat.block),
+				create.bool(false)
+			),
+		}
 	elseif stat.kind == "while" then
 		return {
 			create.stat_while(
@@ -589,17 +606,13 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 
 		return { create.stat_if(branches, else_block) }
 	elseif stat.kind == "numericfor" then
-		-- create local assignment
-		-- create binary operator
-		-- create +=
 		local var_name, start_value =
 			stat.binding.name.text, transform_expr(stat.start_expr)
 		local cond = transform_expr(stat.end_expr)
 		local incr_amount = if stat.step
 			then transform_expr(stat.step.expr)
-			else nil
+			else create.int(1)
 
-		--local init, var = create.stat_localvariable(var_name, start_value)
 		local var = scope_var(create.var(create.var_nameroot(var_name), {}))
 		local init = create.expr_assignment(var, "<-", start_value)
 		local expr_var = create.expr_var(var)
@@ -672,8 +685,6 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			)
 
 			local var = scope_var(create.var(root, suffixes))
-            -- index(a, "b") <- func
-            -- doesnt work ofc
 			return { create.stat_expr(create.expr_assignment(var, "<-", func)) }
 		else
 			-- statement

@@ -102,7 +102,7 @@ function create.expr_var(var: sq.Var): sq.ExprVar
 	}
 end
 
-function create.stat_while(condition: sq.Expr, block: sq.Stat): sq.StatWhile
+function create.stat_while(condition: sq.Expr, block: sq.Block): sq.StatWhile
 	return {
 		kind = "while",
 		condition = condition,
@@ -110,7 +110,7 @@ function create.stat_while(condition: sq.Expr, block: sq.Stat): sq.StatWhile
 	}
 end
 
-function create.stat_dowhile(block: sq.Stat, condition: sq.Expr): sq.StatDoWhile
+function create.stat_dowhile(block: sq.Block, condition: sq.Expr): sq.StatDoWhile
 	return {
 		kind = "dowhile",
 		block = block,
@@ -119,7 +119,7 @@ function create.stat_dowhile(block: sq.Stat, condition: sq.Expr): sq.StatDoWhile
 end
 
 function create.stat_if(
-	branches: sq.IfStatBranch,
+	branches: { sq.IfStatBranch },
 	else_block: sq.Block?
 ): sq.StatIf
 	return {
@@ -154,7 +154,7 @@ function create.stat_localvariable(
 		expr = value,
 	}, {
 		kind = "var",
-		root = ident,
+		root = { kind = "name", name = ident },
 		suffixes = {},
 	}
 end

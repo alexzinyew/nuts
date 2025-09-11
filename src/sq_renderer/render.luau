@@ -44,6 +44,9 @@ local function render_block(block: sq.Block)
 	for _, stat in block.stats do
 		str ..= render_stat(stat)
 	end
+    if block.last_stat then
+        str ..= render_laststat(block.last_stat)
+    end
 	indentation -= 1
 	return str
 end
@@ -250,7 +253,7 @@ function render_stat(stat: sq.Stat)
 	elseif stat.kind == "throw" then
 		--TODO
 	elseif stat.kind == "const" then
-		local value
+		local value: string | number
 		if stat.value.kind == "float" then
 			value = stat.value.float
 		elseif stat.value.kind == "int" then
@@ -265,6 +268,17 @@ function render_stat(stat: sq.Stat)
 	end
 
 	return str
+end
+
+function render_laststat(laststat: sq.LastStat)
+    if laststat.kind == "return" then
+        local expr = if laststat.expr then render_expr(laststat.expr) else nil
+        return `return {expr}`
+    elseif laststat.kind == "continue" then
+        return "continue"
+    else
+        return "break"
+    end
 end
 
 return {

@@ -71,7 +71,7 @@ export type VarSuffix = {
 
 export type ExprFloat = { kind: "float", float: number }
 export type ExprInteger = { kind: "int", int: number }
-export type ExprString = { kind: "string", string: number }
+export type ExprString = { kind: "string", string: string }
 export type ExprBool = { kind: "bool", bool: boolean }
 export type ExprNull = { kind: "null" }
 

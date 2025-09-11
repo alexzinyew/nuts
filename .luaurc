@@ -1,8 +1,9 @@
 {
-    "languageMode": "strict",
-    "aliases": {
-        "src": "./src",
-        "luaup": "./luaup",
-        "vendor": "./vendor"
-    }
+  "languageMode": "strict",
+  "aliases": {
+    "src": "./src",
+    "luaup": "./luaup",
+    "vendor": "./vendor",
+    "lune": "~/.lune/.typedefs/0.10.1/"
+  }
 }
