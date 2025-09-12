@@ -174,33 +174,33 @@ function create.stat_foreach(
 	}
 end
 
-function create.stat_function(
-	name: sq.Identifier,
-	method: sq.Identifier?,
+function create.functionbody(
 	params: { sq.Identifier },
 	free_vars: { sq.Identifier }?,
 	block: sq.Block
+    ): sq.FunctionBody
+    return {
+        parameters = params, free_variables = free_vars, block = block }
+end
+
+function create.stat_function(
+	name: sq.Identifier,
+	method: sq.Identifier?,
+    body: sq.FunctionBody
 ): sq.StatFunction
 	return {
 		kind = "function",
 		root = name,
 		method = method,
-		parameters = params,
-		free_variables = free_vars,
-		block = block,
+        body = body
 	}
 end
 
-function create.expr_function(
-    params: { sq.Identifier },
-    free_vars: { sq.Identifier }?,
-    block: sq.Block
+function create.expr_function(body: sq.FunctionBody
 ): sq.ExprFunction
 	return {
 		kind = "exprfunction",
-		parameters = params,
-		free_variables = free_vars,
-		block = block,
+        body = body
 	}
 end
 

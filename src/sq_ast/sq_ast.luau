@@ -95,6 +95,12 @@ export type UnaryOperator = "-" | "!" | "~" | "++" | "--"
 export type CompoundOperator = "+=" | "-=" | "*=" | "/=" | "%="
 export type AssignmentOperator = "<-" | "=" | CompoundOperator
 
+export type FunctionBody = {
+	parameters: { Identifier },
+	free_variables: { Identifier }?,
+	block: Block,
+}
+
 export type IfStatBranch = {
 	condition: Expr,
 	block: Block,
@@ -158,13 +164,10 @@ export type StatLocalAssignment = {
 export type StatFunction = {
 	kind: "function",
 
-	-- this doesnt behave like a var with suffixes
 	root: Identifier,
 	method: Identifier?,
 
-	parameters: { Identifier },
-	free_variables: { Identifier }?,
-	block: Block,
+    body: FunctionBody,
 }
 
 export type StatClass = {
@@ -320,9 +323,7 @@ export type ExprTable = {
 
 export type ExprFunction = {
 	kind: "exprfunction",
-	parameters: { Identifier },
-	free_variables: { Identifier }?,
-	block: Block,
+    body: FunctionBody
 }
 
 export type ExprDelegate = {

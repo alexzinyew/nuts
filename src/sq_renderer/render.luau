@@ -11,14 +11,15 @@ local function write(str: string)
 end
 
 local function render_helpers()
-    return "\
+    -- rewrite these in luau
+	return "\
     ::__index__ <- function(table, key) {\
         if (!(key in table))\
             return null\
         return table[key]\
     }\
 \
-    ::__new_scope__ <- function(above = null) {\
+    ::__new_scope__ <- function(above) {\
         return delegate {\
             function _get(idx):(above) {\
                 if (idx in above)\
@@ -26,7 +27,7 @@ local function render_helpers()
                 if (idx in ::getroottable())\
                     return ::getroottable()[idx]\
 \
-                return null\
+                return [null]\
             }\
             function _set(idx, val):(above) {\
                 if (idx in above)\
@@ -35,7 +36,20 @@ local function render_helpers()
                 return ::getroottable()[idx] <- val\
             }\
         } : {}\
-    }\n"
+    }\
+    ::__join__ <- function(left, right) {\
+        local arr = []\
+        foreach(v in left) {\
+            arr.push(v)\
+        };\
+        foreach(v in right) {\
+            arr.push(v)\
+        };\
+        return arr\
+    }\
+    \
+    \
+    \n"
 end
 
 local function render_block(block: sq.Block)
@@ -44,9 +58,9 @@ local function render_block(block: sq.Block)
 	for _, stat in block.stats do
 		str ..= render_stat(stat)
 	end
-    if block.last_stat then
-        str ..= render_laststat(block.last_stat)
-    end
+	if block.last_stat then
+		str ..= render_laststat(block.last_stat)
+	end
 	indentation -= 1
 	return str
 end
@@ -74,12 +88,22 @@ function render_var(var: sq.Var)
 			for _, arg in suffix.args do
 				table.insert(args, render_expr(arg))
 			end
-			if args[1] and args[1] == "" then
-				print(suffix.args[1].kind)
-			end
 			str ..= `({table.concat(args, ", ")})`
 		end
 	end
+
+	return str
+end
+
+function render_functionbody(body: sq.FunctionBody)
+	local str = ""
+
+	str ..= `({table.concat(body.parameters, ", ")}):({table.concat(
+		body.free_variables or {},
+		", "
+	)}) \{\n`
+	str ..= render_block(body.block)
+	str ..= write "}"
 
 	return str
 end
@@ -138,12 +162,7 @@ function render_expr(expr: sq.Expr)
 			indentation -= 1
 		end
 	elseif expr.kind == "exprfunction" then
-		str ..= `function({table.concat(expr.parameters, ", ")}):({table.concat(
-			expr.free_variables or {},
-			", "
-		)}) \{\n`
-		str ..= render_block(expr.block)
-		str ..= write "}"
+		return "function " .. render_functionbody(expr.body)
 	elseif expr.kind == "exprdelegate" then
 		str ..= `delegate {render_expr(expr.parent)} : {render_expr(expr.child)}`
 	elseif expr.kind == "exprclone" then
@@ -238,14 +257,8 @@ function render_stat(stat: sq.Stat)
 		str ..= line(`local {stat.ident} = {render_expr(stat.expr)}`)
 	elseif stat.kind == "function" then
 		local method = if stat.method then `:{stat.method}` else ""
-		str ..= line(
-			`function {stat.root}{method}({table.concat(stat.parameters, ", ")}):({table.concat(
-				stat.free_variables or {},
-				", "
-			)}) \{`
-		)
-		str ..= render_block(stat.block)
-		str ..= line "}"
+		str ..= line(`function {stat.root}{method}{render_functionbody(stat.body)}`)
+        return str
 	elseif stat.kind == "class" then
 		--TODO
 	elseif stat.kind == "trycatch" then
@@ -271,19 +284,19 @@ function render_stat(stat: sq.Stat)
 end
 
 function render_laststat(laststat: sq.LastStat)
-    if laststat.kind == "return" then
-        local expr = if laststat.expr then render_expr(laststat.expr) else nil
-        return `return {expr}`
-    elseif laststat.kind == "continue" then
-        return "continue"
-    else
-        return "break"
-    end
+	if laststat.kind == "return" then
+		local expr = if laststat.expr then render_expr(laststat.expr) else nil
+		return `return {expr}`
+	elseif laststat.kind == "continue" then
+		return "continue"
+	else
+		return "break"
+	end
 end
 
 return {
 	stat = render_stat,
 	block = render_block,
 	expr = render_expr,
-    helpers = render_helpers,
+	helpers = render_helpers,
 }

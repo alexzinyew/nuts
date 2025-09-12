@@ -1,19 +1,54 @@
+--!nocheck
+--!nolint
+
+CASE "tuple unpacking function return"
+
 function foo()
     return 1, 2, 3
 end
 
 local a, b, c = foo()
-assert(a == 1)
-assert(b == 2)
-assert(c == 3)
+CHECK(a == 1)
+CHECK(b == 2)
+CHECK(c == 3)
 
-assert(foo() == 1)
+CASE "unpacking more than size"
+local a,b,c,d = foo()
+CHECK(a == 1)
+CHECK(b == 2)
+CHECK(c == 3)
+CHECK(d == nil)
 
+CASE "tuple returning only first expr"
+local t,a,b,c = foo(), foo()
+CHECK(a == 1)
+CHECK(b == 2)
+CHECK(c == 3)
+CHECK(t == 1)
+
+local t = (foo())
+CHECK(t == 1)
+
+CASE "tuple unpacking in not an assignment"
+CHECK(foo() == 1)
+
+CASE "returning tuple calls"
 function bar()
     return foo()
 end
 
-local d, e, f = bar()
-assert(d == 1)
-assert(e == 2)
-assert(f == 3)
+local d, e, f, g = bar()
+CHECK(d == 1)
+CHECK(e == 2)
+CHECK(f == 3)
+
+CASE "returning joint tuple calls"
+function baz()
+    return 4, foo()
+end
+
+local h, i, j, k = baz()
+CHECK(h == 4)
+CHECK(i == 1)
+CHECK(j == 2)
+CHECK(k == 3)

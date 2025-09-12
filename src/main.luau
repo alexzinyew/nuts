@@ -1,4 +1,5 @@
 local fs = require "@lune/fs"
+local process = require "@lune/process"
 
 local luau_parser = require "../luaup/lossless/parse"
 local sq_transform = require "./sq_transformer/transform"
@@ -6,9 +7,9 @@ local sq = require "./sq_ast/sq_ast"
 
 local renderer = require "./sq_renderer/render"
 
-local args = { ... }
-local file_name = assert(args[2], "expected file name")
-local output_name = assert(args[3], "expected output")
+local args = process.args
+local file_name = assert(args[1], "expected file name")
+local output_name = assert(args[2], "expected output")
 local file_content = fs.readFile(file_name)
 
 local luau_parse_result = luau_parser(file_content)

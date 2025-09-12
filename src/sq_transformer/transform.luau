@@ -6,6 +6,28 @@ local create = require "../sq_ast/create"
 local SCOPE_TABLE_ROOT = "__scope__"
 local SCOPE_TABLE_GEN = "__new_scope__"
 local INDEX_FUNC = "__index__"
+local JOIN_FUNC = "__join__"
+
+--stylua: ignore start
+local KEYWORDS = {
+    "break",	"case",	"catch",	"class",	"clone",	"continue",
+    "const",	"default",	"delegate",	"delete",	"else",	"enum",
+    "extends",	"for",	"foreach",	"function",	"if",	"in",
+    "local",	"null",	"resume",	"return",	"switch",	"this",
+    "throw",	"try",	"typeof",	"while",	"parent",	"yield",
+    "constructor",	"vargc",	"vargv",	"instanceof",	"true",	"false",
+    "static",
+}
+--stylua: ignore end
+
+-- SCOPE_TABLE_ROOT = "s"
+-- SCOPE_TABLE_GEN = "ns"
+-- INDEX_FUNC = "i"
+
+local possible_tuples = {} :: { [sq.Var]: true }
+
+--TODO function defs need an args array that is unpacked
+--and therefore all function calls need to pass array from transform_exprarray
 
 local function unshift<T>(destination: { T }, value: { T })
 	table.move(destination, 1, #destination, #value + 1)
@@ -22,6 +44,15 @@ end
 
 local function prereq(stat: sq.Stat)
 	table.insert(prereqs_stack[#prereqs_stack], stat)
+end
+
+local function safe_ident(ident: string): string
+    if table.find(KEYWORDS, ident) then
+        print "EVIl"
+        print(ident)
+        return unique_id(ident .. "_1")
+    end
+    return ident
 end
 
 function transform_cst(cst: luau.Cst): sq.Block
@@ -86,19 +117,19 @@ function transform_block(block: luau.Block)
 	} :: sq.Block
 end
 
-function transform_functionarg(arg: luau.FunctionArg): { sq.Expr }
+function transform_functionarg(arg: luau.FunctionArg): sq.ExprArray
 	if arg.kind == "pack" then
 		local exprs = {}
 		for _, pair in arg.exprs do
-			table.insert(exprs, transform_expr(pair.node))
+			table.insert(exprs, pair.node)
 		end
-		return exprs
+		return (transform_exprarray(exprs))
 	elseif arg.kind == "string" then
-		return { create.string(trim_string(arg.tok.text)) }
+		return create.expr_array { create.string(trim_string(arg.tok.text)) }
 	elseif arg.kind == "table" then
 		local table_expr =
 			{ kind = "table", table = arg.table } :: luau.Expr_Table
-		return { transform_expr(table_expr) }
+		return create.expr_array { transform_expr(table_expr) }
 	end
 	error ""
 end
@@ -140,13 +171,7 @@ function unique_id(ident: sq.Identifier)
 end
 
 function can_be_tuple(var: sq.Var): boolean
-	if #var.suffixes == 0 then
-		return false
-	end
-	if var.suffixes[#var.suffixes].kind ~= "call" then
-		return false
-	end
-	return true
+	return possible_tuples[var] ~= nil
 end
 
 function unpack_tuple(
@@ -160,9 +185,9 @@ function unpack_tuple(
 		local assignment
 
 		local value = create.expr_var(
-			create.var(
-				create.var_nameroot(tuple),
-				{ create.var_exprsuffix(create.int(i - 1)) }
+			wrap_index(
+				create.var(create.var_nameroot(tuple), {}),
+				create.int(i - 1)
 			)
 		)
 
@@ -180,6 +205,44 @@ function unpack_tuple(
 	return stats
 end
 
+function transform_exprarray(
+	exprs: { luau.Expr }
+): (sq.Expr, number, sq.ExprVar?)
+	local transformed = {} :: { sq.Expr }
+	local tuple
+
+	for i, lexpr in exprs do
+		local expr = transform_expr(lexpr)
+
+		if
+			expr.kind == "exprvar"
+			and can_be_tuple(expr.var)
+			and i == #exprs
+		then
+			tuple = tuple_var(expr.var)
+		else
+			table.insert(transformed, expr)
+		end
+	end
+
+	local array = create.expr_array(transformed)
+
+	if tuple then
+		local var = create.expr_var(create.var(create.var_nameroot(JOIN_FUNC), {
+			create.var_callsuffix(nil, {
+				array,
+				tuple,
+			}),
+		}))
+
+		return var, #transformed, tuple
+	end
+
+	return array, #transformed, tuple
+end
+
+--TODO __index__(a, b) <- 
+--obv work ofc
 function transform_assignments(
 	local_assignment: boolean,
 	left: { luau.Var | string },
@@ -187,76 +250,27 @@ function transform_assignments(
 ): { sq.Stat }
 	local stats = {} :: { sq.Stat }
 
-	for i, lvar in left do
-		local var, expr
-		if typeof(lvar) == "string" then -- local variables are identifiers, not vars
-			var = scope_var(create.var(create.var_nameroot(lvar), {}))
+	local array, expr_amount, tuple = transform_exprarray(right)
+
+	local vars = {}
+	for i = 1, #left do
+		local leftv, other_lvar = left[i], nil
+
+		-- local variables are identifiers, not vars
+		if typeof(leftv) == "string" then
+			other_lvar = scope_var(create.var(create.var_nameroot(safe_ident(leftv)), {}))
 		else
-			var = transform_var(lvar, true)
+			other_lvar = transform_var(leftv)
 		end
+		table.insert(vars, other_lvar)
+	end
 
-		if right[i] then
-			expr = transform_expr(right[i])
+	local temp_name = unique_id "tuple"
+	local assignments = unpack_tuple(temp_name, vars, local_assignment)
 
-			if expr.kind == "exprvar" and can_be_tuple(expr.var) then
-				-- could be a tuple
-				if i == #right then
-					-- tuple!
-					local temp_name = unique_id "tuple"
-
-					local vars = {}
-					for j = i, #left do
-						local leftv, other_lvar = left[j], nil
-
-						-- local variables are identifiers, not vars
-						if typeof(leftv) == "string" then
-							other_lvar = scope_var(
-								create.var(create.var_nameroot(leftv), {})
-							)
-						else
-							other_lvar = transform_var(leftv)
-						end
-						table.insert(vars, other_lvar)
-					end
-
-					local assignments =
-						unpack_tuple(temp_name, vars, local_assignment)
-
-					-- "local tuple = ...()"
-					table.insert(
-						stats,
-						(create.stat_localvariable(temp_name, expr))
-					)
-
-					for _, stat in assignments do
-						table.insert(stats, stat)
-					end
-
-					return stats
-				else
-					-- function call, not a tuple, so return first element
-					-- TODO evil mutation
-					table.insert(
-						expr.var.suffixes,
-						create.var_exprsuffix(create.int(0))
-					)
-				end
-			end
-		else
-			expr = create.null()
-		end
-
-		if not local_assignment then
-			table.insert(
-				stats,
-				create.stat_expr(create.expr_assignment(var, "=", expr))
-			)
-		else
-			table.insert(
-				stats,
-				create.stat_expr(create.expr_assignment(var, "<-", expr))
-			)
-		end
+	table.insert(stats, (create.stat_localvariable(temp_name, array)))
+	for _, v in assignments do
+		table.insert(stats, v)
 	end
 
 	return stats
@@ -297,13 +311,10 @@ function scope_var(var: sq.Var): sq.Var
 	return accumulator
 end
 
-function transform_var(var: luau.Var, assignment: boolean?): sq.Var
-	--TODO only index 0 of a function call if its not an assignment
-	-- this assignment parameter will not work for exprvars in an assignment!
-    -- figure something else out!
+function transform_var(var: luau.Var): sq.Var
 	local root, suffixes = nil, {}
 	if var.root.kind == "name" then
-		root = create.var_nameroot(var.root.tok.text)
+		root = create.var_nameroot(safe_ident(var.root.tok.text))
 	else
 		local expr = transform_expr(var.root.expr)
 
@@ -317,10 +328,10 @@ function transform_var(var: luau.Var, assignment: boolean?): sq.Var
 			then
 				-- TODO turn into a nameroot ideally cuz the parens here are unecessary
 				-- anyway
-				table.insert(
-					rvar.suffixes,
-					create.var_exprsuffix(create.int(0))
-				)
+				-- table.insert(
+				-- 	rvar.suffixes,
+				-- 	create.var_exprsuffix(create.int(0))
+				-- )
 			end
 		end
 
@@ -329,7 +340,7 @@ function transform_var(var: luau.Var, assignment: boolean?): sq.Var
 
 	for _, suffix in var.suffixes do
 		if suffix.kind == "nameindex" then
-			table.insert(suffixes, create.var_namesuffix(suffix.name.text))
+			table.insert(suffixes, create.var_namesuffix(safe_ident(suffix.name.text)))
 		elseif suffix.kind == "exprindex" then
 			table.insert(
 				suffixes,
@@ -339,23 +350,78 @@ function transform_var(var: luau.Var, assignment: boolean?): sq.Var
 			local method = if suffix.method
 				then suffix.method.name.text
 				else nil
-			local args = transform_functionarg(suffix.arg)
+			local array = transform_functionarg(suffix.arg)
 
-			table.insert(suffixes, create.var_callsuffix(method, args))
+			table.insert(suffixes, create.var_callsuffix(method, { array }))
 		end
 	end
 
-	if
-		not assignment
-		and #suffixes > 0
-		and suffixes[#suffixes].kind == "call"
-	then
-		table.insert(suffixes, create.var_exprsuffix(create.int(0)))
+	local possible_tuple
+	if #suffixes > 0 and suffixes[#suffixes].kind == "call" then
+		possible_tuple = true
 	end
 
 	local sqvar = create.var(root, suffixes)
 
-	return scope_var(sqvar)
+	local scoped = scope_var(sqvar)
+
+	if possible_tuple then
+		scoped = wrap_index(scoped, create.int(0))
+		possible_tuples[scoped :: any] = true
+	end
+
+	return scoped
+end
+
+-- mutates
+function tuple_var(var: sq.Var): sq.ExprVar
+	local suffixes = var.suffixes
+	if possible_tuples[var] then
+		local popped = table.remove(suffixes, #suffixes)
+		assert(popped and popped.kind == "call")
+		assert(popped.args[1] and popped.args[1].kind == "exprvar")
+		return popped.args[1] :: any
+	end
+	error "not a tuple"
+end
+
+function transform_functionbody(body: luau.FunctionBody): sq.FunctionBody
+	local array_name = unique_id "args"
+	local block = transform_block(body.block)
+
+	local param_assignments = {}
+
+	for i, pair in body.params do
+		local param = pair.node.name.text
+		table.insert(
+			param_assignments,
+			create.stat_expr(
+				create.expr_assignment(
+					scope_var(create.var(create.var_nameroot(param), {})),
+					"<-",
+					create.expr_var(
+						wrap_index(
+							create.var(create.var_nameroot(array_name), {}),
+							create.int(i - 1)
+						)
+					)
+				)
+			)
+		)
+	end
+
+	local new_block = {
+		stats = param_assignments,
+		last_stat = block.last_stat,
+	} :: sq.Block
+
+	-- fix scope decl being after unpack
+
+	for _, stat in block.stats do
+		table.insert(new_block.stats, stat)
+	end
+
+	return create.functionbody({ array_name }, { SCOPE_TABLE_ROOT }, new_block)
 end
 
 function transform_expr(expr: luau.Expr): sq.Expr
@@ -370,10 +436,10 @@ function transform_expr(expr: luau.Expr): sq.Expr
 
 		if not num then
 			if string.find(string.lower(text), "^0b") then
-				local binary = string.reverse(string.sub(text, 3, #text))
+				local binary = string.sub(text, 3, #text)
 				num = tonumber(binary, 2)
 			elseif string.find(string.lower(text), "^0x") then
-				local hex = string.reverse(string.sub(text, 3, #text))
+				local hex = string.sub(text, 3, #text)
 				num = tonumber(hex, 16)
 			end
 		end
@@ -514,15 +580,7 @@ function transform_expr(expr: luau.Expr): sq.Expr
 		end
 		return accumulator
 	elseif expr.kind == "function" then
-		local params = {}
-		for _, pair in expr.body.params do
-			table.insert(params, pair.node.name.text)
-		end
-
-		local func =
-			create.expr_function(params, {}, transform_block(expr.body.block))
-
-		return func
+		return create.expr_function(transform_functionbody(expr.body))
 	end
 	error("unknown expr: " .. expr.kind)
 end
@@ -540,7 +598,7 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 
 		return transform_assignments(true, left, right)
 	elseif stat.kind == "compoundassign" then
-		local var = transform_var(stat.left, true)
+		local var = transform_var(stat.left)
 		local expr = transform_expr(stat.right)
 		local op = stat.operator.kind
 
@@ -613,6 +671,8 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			then transform_expr(stat.step.expr)
 			else create.int(1)
 
+        var_name = safe_ident(var_name)
+
 		local var = scope_var(create.var(create.var_nameroot(var_name), {}))
 		local init = create.expr_assignment(var, "<-", start_value)
 		local expr_var = create.expr_var(var)
@@ -666,10 +726,11 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			local root, suffixes = nil, {}
 			for i, pair in stat.names do
 				local node = pair.node
+                local name = safe_ident(node.text)
 				if not root then
-					root = create.var_nameroot(node.text)
+					root = create.var_nameroot(name)
 				else
-					table.insert(suffixes, create.var_namesuffix(node.text))
+					table.insert(suffixes, create.var_namesuffix(name))
 				end
 			end
 
@@ -679,9 +740,11 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			end
 
 			local func = create.expr_function(
-				params,
-				{},
-				transform_block(stat.body.block)
+				create.functionbody(
+					params,
+					{},
+					transform_block(stat.body.block)
+				)
 			)
 
 			local var = scope_var(create.var(root, suffixes))
@@ -689,46 +752,29 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 		else
 			-- statement
 
-			local name = stat.names[1].node.text
+			local name = safe_ident(stat.names[1].node.text)
 			local method = if stat.method then stat.method.name.text else nil
-			local params = {}
-
-			if method then
-				table.insert(params, "self")
-			end
-
-			for _, pair in stat.body.params do
-				table.insert(params, pair.node.name.text)
-			end
-
-			local block = transform_block(stat.body.block)
 
 			--TODO varargs
 
 			return {
 				create.stat_function(
 					name,
-					method,
-					params,
-					{ SCOPE_TABLE_ROOT },
-					block
+					method, --TODO add self to params
+					transform_functionbody(stat.body)
 				),
 			}
 		end
 	elseif stat.kind == "localfunction" then
 		local params = {}
 		for _, pair in stat.body.params do
-			table.insert(params, pair.node.name.text)
+			table.insert(params, safe_ident(pair.node.name.text))
 		end
 
-		local func = create.expr_function(
-			params,
-			{ SCOPE_TABLE_ROOT },
-			transform_block(stat.body.block)
-		)
+		local func = create.expr_function(transform_functionbody(stat.body))
 
 		local var =
-			scope_var(create.var(create.var_nameroot(stat.name.text), {}))
+			scope_var(create.var(create.var_nameroot(safe_ident(stat.name.text)), {}))
 		return { create.stat_expr(create.expr_assignment(var, "<-", func)) }
 	elseif stat.kind == "typefunction" then
 		return {}
@@ -741,18 +787,11 @@ end
 function transform_laststat(stat: luau.LastStat): sq.LastStat
 	if stat.kind == "return" then
 		local exprs = {}
-
-		for i, pair in stat.exprs do
-			local localvarstat, var = create.stat_localvariable(
-				unique_id("return_" .. i),
-				transform_expr(pair.node)
-			)
-
-			table.insert(exprs, create.expr_var(var))
-			prereq(localvarstat)
+		for _, pair in stat.exprs do
+			table.insert(exprs, pair.node)
 		end
 
-		return create.lstat_return(create.expr_array(exprs))
+		return create.lstat_return((transform_exprarray(exprs)))
 	elseif stat.kind == "break" then
 		return create.lstat_break()
 	else
