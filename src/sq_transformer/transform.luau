@@ -23,6 +23,7 @@ local KEYWORDS = {
 -- SCOPE_TABLE_ROOT = "s"
 -- SCOPE_TABLE_GEN = "ns"
 -- INDEX_FUNC = "i"
+-- JOIN_FUNC = "j"
 
 local possible_tuples = {} :: { [sq.Var]: true }
 
@@ -47,12 +48,10 @@ local function prereq(stat: sq.Stat)
 end
 
 local function safe_ident(ident: string): string
-    if table.find(KEYWORDS, ident) then
-        print "EVIl"
-        print(ident)
-        return unique_id(ident .. "_1")
-    end
-    return ident
+	if table.find(KEYWORDS, ident) then
+		return unique_id(ident .. "_1")
+	end
+	return ident
 end
 
 function transform_cst(cst: luau.Cst): sq.Block
@@ -69,19 +68,27 @@ function transform_cst(cst: luau.Cst): sq.Block
 	return block
 end
 
-function transform_block(block: luau.Block)
-	local stats = {
-		(create.stat_localvariable(
-			SCOPE_TABLE_ROOT,
-			create.expr_var(create.var(create.var_nameroot(SCOPE_TABLE_GEN), {
-				create.var_callsuffix(nil, {
-					create.expr_var(
-						create.var(create.var_nameroot(SCOPE_TABLE_ROOT), {})
-					),
-				}),
-			}))
-		)),
-	} :: { sq.Stat }
+function new_scope(name: string?, prev: string?)
+	return create.stat_localvariable(
+		name or SCOPE_TABLE_ROOT,
+		create.expr_var(create.var(create.var_nameroot(SCOPE_TABLE_GEN), {
+			create.var_callsuffix(nil, {
+				create.expr_var(
+					create.var(
+						create.var_nameroot(prev or SCOPE_TABLE_ROOT),
+						{}
+					)
+				),
+			}),
+		}))
+	)
+end
+
+function transform_block(block: luau.Block, dont_make_scope: boolean?)
+	local stats = {} :: { sq.Stat }
+	if not dont_make_scope then
+		table.insert(stats, (new_scope()))
+	end
 
 	for _, pair in block.stats do
 		local stat = pair.node
@@ -90,10 +97,10 @@ function transform_block(block: luau.Block)
 			return transform_stat(stat)
 		end)
 
-		for _, v in result do
+		for _, v in captured do
 			table.insert(stats, v)
 		end
-		for _, v in captured do
+		for _, v in result do
 			table.insert(stats, v)
 		end
 	end
@@ -117,7 +124,7 @@ function transform_block(block: luau.Block)
 	} :: sq.Block
 end
 
-function transform_functionarg(arg: luau.FunctionArg): sq.ExprArray
+function transform_functionarg(arg: luau.FunctionArg): sq.Expr
 	if arg.kind == "pack" then
 		local exprs = {}
 		for _, pair in arg.exprs do
@@ -135,7 +142,7 @@ function transform_functionarg(arg: luau.FunctionArg): sq.ExprArray
 end
 
 function trim_string(str: string)
-	return string.sub(str, 2, #str - 1)
+	return (string.gsub(string.sub(str, 2, #str - 1), '"', '\\"'))
 end
 
 function wrap_index(var: sq.Var, index: sq.Expr)
@@ -145,6 +152,20 @@ function wrap_index(var: sq.Var, index: sq.Expr)
 			index,
 		}),
 	})
+end
+
+function unwrap_index(var: sq.Var)
+	if var.root.kind == "name" and var.root.name == INDEX_FUNC then
+		local call = var.suffixes[1]
+		assert(call.kind == "call")
+		local expr, index = call.args[1], call.args[2]
+
+		assert(expr.kind == "exprvar")
+
+		table.insert(expr.var.suffixes, create.var_exprsuffix(index))
+		var = expr.var
+	end
+	return var
 end
 
 function floor_div(expr1: sq.Expr, expr2: sq.Expr)
@@ -241,7 +262,7 @@ function transform_exprarray(
 	return array, #transformed, tuple
 end
 
---TODO __index__(a, b) <- 
+--TODO __index__(a, b) <-
 --obv work ofc
 function transform_assignments(
 	local_assignment: boolean,
@@ -254,13 +275,15 @@ function transform_assignments(
 
 	local vars = {}
 	for i = 1, #left do
-		local leftv, other_lvar = left[i], nil
+		local leftv, other_lvar: sq.Var = left[i], nil
 
 		-- local variables are identifiers, not vars
 		if typeof(leftv) == "string" then
-			other_lvar = scope_var(create.var(create.var_nameroot(safe_ident(leftv)), {}))
+			other_lvar = scope_var(
+				create.var(create.var_nameroot(safe_ident(leftv)), {})
+			)
 		else
-			other_lvar = transform_var(leftv)
+			other_lvar = unwrap_index(transform_var(leftv))
 		end
 		table.insert(vars, other_lvar)
 	end
@@ -340,7 +363,10 @@ function transform_var(var: luau.Var): sq.Var
 
 	for _, suffix in var.suffixes do
 		if suffix.kind == "nameindex" then
-			table.insert(suffixes, create.var_namesuffix(safe_ident(suffix.name.text)))
+			table.insert(
+				suffixes,
+				create.var_namesuffix(safe_ident(suffix.name.text))
+			)
 		elseif suffix.kind == "exprindex" then
 			table.insert(
 				suffixes,
@@ -415,9 +441,12 @@ function transform_functionbody(body: luau.FunctionBody): sq.FunctionBody
 		last_stat = block.last_stat,
 	} :: sq.Block
 
-	-- fix scope decl being after unpack
-
-	for _, stat in block.stats do
+	for i, stat in block.stats do
+		if i == 1 then
+			print "unshifting"
+			unshift(new_block.stats, { stat })
+			continue
+		end
 		table.insert(new_block.stats, stat)
 	end
 
@@ -602,6 +631,8 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 		local expr = transform_expr(stat.right)
 		local op = stat.operator.kind
 
+		var = unwrap_index(var)
+
 		if op == "//=" then
 			local floored = floor_div(create.expr_var(var), expr)
 			return {
@@ -671,22 +702,41 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			then transform_expr(stat.step.expr)
 			else create.int(1)
 
-        var_name = safe_ident(var_name)
+		var_name = safe_ident(var_name)
 
 		local var = scope_var(create.var(create.var_nameroot(var_name), {}))
 		local init = create.expr_assignment(var, "<-", start_value)
+		-- local init = create.stat_localvariable(var_name, start_value)
 		local expr_var = create.expr_var(var)
 
 		local cond_expr = create.binary(expr_var, ">=", cond)
 		local incr_expr = create.expr_assignment(var, "+=", incr_amount)
 
+		local backup_name = unique_id "backup"
+		local backup, backup_var = create.stat_localvariable(
+			backup_name,
+			create.expr_var(
+				create.var(create.var_nameroot(SCOPE_TABLE_ROOT), {})
+			)
+		)
+
+		prereq(backup)
+		prereq((new_scope()))
+
+		local block = transform_block(stat.block, true)
+
+		-- local backup = __scope__
+		-- local __scope__ == __new__scope(__scope__)
+		--
+		-- for () {
+		--  local __scope__ = __new__scope(__scope__)
+		-- }
+		--
+		-- local __scope__ = backup
+
 		return {
-			create.stat_for(
-				transform_block(stat.block),
-				init,
-				cond_expr,
-				incr_expr
-			),
+			create.stat_for(block, init, cond_expr, incr_expr),
+			create.stat_localvariable(SCOPE_TABLE_ROOT, create.expr_var(backup_var)),
 		}
 	elseif stat.kind == "forin" then
 		local left, right = {}, {}
@@ -698,11 +748,41 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			table.insert(right, pair.node)
 		end
 
-		-- idfk
-		-- transform_assignments might need to be separated
+		local expr = transform_exprarray(right)
+
+		local to_unpack = {}
+
+		local i_id = unique_id "_"
+		for i, pair in stat.bindings do
+			local ident = safe_ident(pair.node.name.text)
+			if i == 1 then
+				i_id = ident
+			else
+				table.insert(
+					to_unpack,
+					create.var(create.var_nameroot(ident), {})
+				)
+			end
+		end
+
+		local v_id = unique_id "tuple"
+		local block = transform_block(stat.block)
+
+		local new_block = {
+			stats = unpack_tuple(v_id, to_unpack, true),
+			last_stat = block.last_stat,
+		} :: sq.Block
+
+		for i, stat in block.stats do
+			if i == 1 then
+				unshift(new_block.stats, { stat })
+				continue
+			end
+			table.insert(new_block.stats, stat)
+		end
 
 		return {
-			-- create.stat_foreach(i_id, v_id, expr, block)
+			create.stat_foreach(i_id, v_id, expr, new_block),
 		}
 	elseif stat.kind == "localvariable" then
 		local left, right = {}, {}
@@ -726,7 +806,7 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			local root, suffixes = nil, {}
 			for i, pair in stat.names do
 				local node = pair.node
-                local name = safe_ident(node.text)
+				local name = safe_ident(node.text)
 				if not root then
 					root = create.var_nameroot(name)
 				else
@@ -747,7 +827,7 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 				)
 			)
 
-			local var = scope_var(create.var(root, suffixes))
+			local var = unwrap_index(scope_var(create.var(root, suffixes)))
 			return { create.stat_expr(create.expr_assignment(var, "<-", func)) }
 		else
 			-- statement
@@ -773,8 +853,11 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 
 		local func = create.expr_function(transform_functionbody(stat.body))
 
-		local var =
-			scope_var(create.var(create.var_nameroot(safe_ident(stat.name.text)), {}))
+		local var = unwrap_index(
+			scope_var(
+				create.var(create.var_nameroot(safe_ident(stat.name.text)), {})
+			)
+		)
 		return { create.stat_expr(create.expr_assignment(var, "<-", func)) }
 	elseif stat.kind == "typefunction" then
 		return {}

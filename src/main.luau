@@ -40,4 +40,5 @@ print(time)
 local rendered = renderer.block(result)
 rendered = renderer.helpers() .. rendered
 
+print(output_name)
 fs.writeFile(output_name, rendered)

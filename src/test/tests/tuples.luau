@@ -26,8 +26,10 @@ CHECK(b == 2)
 CHECK(c == 3)
 CHECK(t == 1)
 
-local t = (foo())
+local t, a, b = (foo())
 CHECK(t == 1)
+CHECK(a == nil)
+CHECK(b == nil)
 
 CASE "tuple unpacking in not an assignment"
 CHECK(foo() == 1)
@@ -44,7 +46,7 @@ CHECK(f == 3)
 
 CASE "returning joint tuple calls"
 function baz()
-    return 4, foo()
+    return bar(), foo()
 end
 
 local h, i, j, k = baz()

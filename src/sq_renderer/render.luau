@@ -14,9 +14,13 @@ local function render_helpers()
     -- rewrite these in luau
 	return "\
     ::__index__ <- function(table, key) {\
-        if (!(key in table))\
+        if (!(key in table) || table == null)\
             return null\
         return table[key]\
+    }\
+    \
+    ::__set__ <- function(table, key, value) {\
+        return table[key] <- value\
     }\
 \
     ::__new_scope__ <- function(above) {\
@@ -27,7 +31,7 @@ local function render_helpers()
                 if (idx in ::getroottable())\
                     return ::getroottable()[idx]\
 \
-                return [null]\
+                return null\
             }\
             function _set(idx, val):(above) {\
                 if (idx in above)\
@@ -229,9 +233,10 @@ function render_stat(stat: sq.Stat)
 
 		if stat.init then
 			if stat.init.kind == "localassignment" then
-				error "local for var"
+                init = `local {stat.init.ident} = {render_expr(stat.init.expr)}`
+            else
+			    init = render_expr(stat.init)
 			end
-			init = render_expr(stat.init)
 		end
 		if stat.cond_expr then
 			cond = render_expr(stat.cond_expr)

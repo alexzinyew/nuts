@@ -131,7 +131,7 @@ end
 
 function create.stat_for(
 	block: sq.Block,
-	init: sq.Expr?,
+	init: (sq.Expr | sq.StatLocalAssignment)?,
 	cond: sq.Expr?,
 	incr: sq.Expr?
 ): sq.StatFor
