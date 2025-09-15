@@ -51,7 +51,9 @@ local function render_helpers()
         };\
         return arr\
     }\
-    \
+    ::cprintl <- function(args) {\
+        printl(args[0])\
+    }\
     \
     \n"
 end
@@ -152,16 +154,17 @@ function render_expr(expr: sq.Expr)
 			str ..= "{\n"
 			indentation += 1
 
+            local fields = {}
 			for _, field in expr.fields do
 				if field.kind == "namekey" then
-					str ..= `{field.key} = {render_expr(field.expr)}`
+					table.insert(fields, `{field.key} = {render_expr(field.expr)}`)
 				else
-					str ..= `[{render_expr(field.key)}] = {render_expr(
+					table.insert(fields, `[{render_expr(field.key)}] = {render_expr(
 						field.expr
-					)}`
+					)}`)
 				end
 			end
-
+            str ..= table.concat(fields, ", ")
 			str ..= write "}"
 			indentation -= 1
 		end

@@ -101,9 +101,11 @@ local function run_tests()
 							continue
 						end
 						if line:find "TEST_CHECK" then
-							local split = string.split(line, " ")
-							test.case.result = split[2] == "pass" and 1 or 2
-							test.case.line = split[3]
+                            if test.case.result ~= 2 then
+                                local split = string.split(line, " ")
+                                test.case.result = split[2] == "pass" and 1 or 2
+                                test.case.line = split[3]
+                            end
 						end
 						if line:find "AN ERROR HAS OCCURED" then
 							error_message =

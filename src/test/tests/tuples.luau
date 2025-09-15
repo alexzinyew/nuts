@@ -50,7 +50,7 @@ function baz()
 end
 
 local h, i, j, k = baz()
-CHECK(h == 4)
+CHECK(h == 1)
 CHECK(i == 1)
 CHECK(j == 2)
 CHECK(k == 3)

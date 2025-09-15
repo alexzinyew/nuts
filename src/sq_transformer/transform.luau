@@ -212,13 +212,14 @@ function unpack_tuple(
 			)
 		)
 
-		if local_variable then
-			assignment =
-				create.stat_expr(create.expr_assignment(var, "<-", value))
-		else
-			assignment =
-				create.stat_expr(create.expr_assignment(var, "=", value))
+		local operator = "="
+		if #var.suffixes > 1 or local_variable then
+			operator = "<-"
 		end
+
+		assignment = create.stat_expr(
+			create.expr_assignment(var, operator :: any, value)
+		)
 
 		table.insert(stats, assignment)
 	end
@@ -625,7 +626,7 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			table.insert(right, pair.node)
 		end
 
-		return transform_assignments(true, left, right)
+		return transform_assignments(false, left, right)
 	elseif stat.kind == "compoundassign" then
 		local var = transform_var(stat.left)
 		local expr = transform_expr(stat.right)
@@ -709,7 +710,7 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 		-- local init = create.stat_localvariable(var_name, start_value)
 		local expr_var = create.expr_var(var)
 
-		local cond_expr = create.binary(expr_var, ">=", cond)
+		local cond_expr = create.binary(expr_var, "<=", cond)
 		local incr_expr = create.expr_assignment(var, "+=", incr_amount)
 
 		local backup_name = unique_id "backup"
@@ -725,18 +726,12 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 
 		local block = transform_block(stat.block, true)
 
-		-- local backup = __scope__
-		-- local __scope__ == __new__scope(__scope__)
-		--
-		-- for () {
-		--  local __scope__ = __new__scope(__scope__)
-		-- }
-		--
-		-- local __scope__ = backup
-
 		return {
 			create.stat_for(block, init, cond_expr, incr_expr),
-			create.stat_localvariable(SCOPE_TABLE_ROOT, create.expr_var(backup_var)),
+			create.stat_localvariable(
+				SCOPE_TABLE_ROOT,
+				create.expr_var(backup_var)
+			),
 		}
 	elseif stat.kind == "forin" then
 		local left, right = {}, {}
@@ -748,7 +743,17 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			table.insert(right, pair.node)
 		end
 
-		local expr = transform_exprarray(right)
+		local expr, n_exprs = transform_exprarray(right)
+
+        if n_exprs > 1 then
+            -- not generalized
+        elseif n_exprs == 1 then
+            -- set expr to 0th index of expr
+            -- sq has generalized iteration and _nexti which should work?
+            -- TODO confirm above
+        else
+            error ""
+        end
 
 		local to_unpack = {}
 
@@ -760,13 +765,13 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			else
 				table.insert(
 					to_unpack,
-					create.var(create.var_nameroot(ident), {})
+					scope_var(create.var(create.var_nameroot(ident), {}))
 				)
 			end
 		end
 
 		local v_id = unique_id "tuple"
-		local block = transform_block(stat.block)
+		local block = transform_block(stat.block, true)
 
 		local new_block = {
 			stats = unpack_tuple(v_id, to_unpack, true),
@@ -774,15 +779,23 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 		} :: sq.Block
 
 		for i, stat in block.stats do
-			if i == 1 then
-				unshift(new_block.stats, { stat })
-				continue
-			end
 			table.insert(new_block.stats, stat)
 		end
 
+		local backup_name = unique_id "backup"
+		local backup, backup_var = create.stat_localvariable(
+			backup_name,
+			create.expr_var(
+				create.var(create.var_nameroot(SCOPE_TABLE_ROOT), {})
+			)
+		)
+
 		return {
 			create.stat_foreach(i_id, v_id, expr, new_block),
+			create.stat_localvariable(
+				SCOPE_TABLE_ROOT,
+				create.expr_var(backup_var)
+			),
 		}
 	elseif stat.kind == "localvariable" then
 		local left, right = {}, {}
