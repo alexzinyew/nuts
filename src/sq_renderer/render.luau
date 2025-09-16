@@ -11,51 +11,107 @@ local function write(str: string)
 end
 
 local function render_helpers()
-    -- rewrite these in luau
-	return "\
-    ::__index__ <- function(table, key) {\
-        if (!(key in table) || table == null)\
+	-- rewrite these in luau
+	return '\
+::__index__ <- function(table, key) {\
+    if (!(key in table) || table == null)\
+        return null\
+    return table[key]\
+}\
+\
+::__set__ <- function(table, key, value) {\
+    return table[key] <- value\
+}\
+\
+::__new_scope__ <- function(above) {\
+    return delegate {\
+        function _get(idx):(above) {\
+            if (idx in above)\
+                return above[idx]\
+            if (idx in ::getroottable())\
+                return ::getroottable()[idx]\
+\
             return null\
-        return table[key]\
-    }\
+        }\
+        function _set(idx, val):(above) {\
+            if (idx in above)\
+                return above[idx] = val\
+\
+            return ::getroottable()[idx] <- val\
+        }\
+    } : {}\
+}\
+::__join__ <- function(left, right) {\
+    local arr = []\
+    foreach(v in left) {\
+        arr.push(v)\
+    };\
+    foreach(v in right) {\
+        arr.push(v)\
+    };\
+    return arr\
+}\
+::cprintl <- function(args) {\
+    printl(args[0])\
+}\
+\
+::next <- function() { throw "cannot use next outside of a for loop" }\
+::pairs <- function(args) { return [::next, args[0]] }\
+::ipairs <- function(args) {\
+    if (!(0 in args)) throw "missing argument #1 to ipairs" \
+    return [function(fargs) {\
+        local a = fargs[0]\
+        local i = null\
+        if (1 in fargs) i = fargs[1]\
+        if (i == null) \
+            i = 0\
+        else\
+            i++\
     \
-    ::__set__ <- function(table, key, value) {\
-        return table[key] <- value\
-    }\
-\
-    ::__new_scope__ <- function(above) {\
-        return delegate {\
-            function _get(idx):(above) {\
-                if (idx in above)\
-                    return above[idx]\
-                if (idx in ::getroottable())\
-                    return ::getroottable()[idx]\
-\
-                return null\
-            }\
-            function _set(idx, val):(above) {\
-                if (idx in above)\
-                    return above[idx] = val\
-\
-                return ::getroottable()[idx] <- val\
-            }\
-        } : {}\
-    }\
-    ::__join__ <- function(left, right) {\
-        local arr = []\
-        foreach(v in left) {\
-            arr.push(v)\
-        };\
-        foreach(v in right) {\
-            arr.push(v)\
-        };\
-        return arr\
-    }\
-    ::cprintl <- function(args) {\
-        printl(args[0])\
-    }\
+        if (i in a) {\
+            return [i, a[i]]\
+        }\
+    }, args[0]]\
     \
-    \n"
+}\
+::__iter__ <- function(args, func) {\
+    local first = args[0]\
+    if (typeof first == "function") {\
+        local idx = null\
+        local state = null\
+        if (1 in args) {\
+            state = args[1]\
+        } else {\
+            throw "iterator function expected table"\
+        }\
+        if (first == ::next) {\
+            if (2 in args) {\
+                throw "cannot use second argument of next"\
+            }\
+            foreach(i, v in state) {\
+                func([i, v])\
+            }\
+        } else {\
+            if (2 in args) {\
+                idx = args[2] - 1\
+            }\
+            while (true) {\
+                local ret = first([state, idx])\
+                if (ret == null || !(0 in ret) || ret[0] == null) {\
+                    break\
+                }\
+                idx = ret[0]\
+                func(ret)\
+            }\
+        }\
+    } else {\
+        foreach(i, v in first) {\
+            func([i, v])\
+        }\
+    }\
+}\
+\
+\n'
 end
 
 local function render_block(block: sq.Block)
@@ -154,17 +210,21 @@ function render_expr(expr: sq.Expr)
 			str ..= "{\n"
 			indentation += 1
 
-            local fields = {}
+			local fields = {}
 			for _, field in expr.fields do
 				if field.kind == "namekey" then
-					table.insert(fields, `{field.key} = {render_expr(field.expr)}`)
+					table.insert(
+						fields,
+						`{field.key} = {render_expr(field.expr)}`
+					)
 				else
-					table.insert(fields, `[{render_expr(field.key)}] = {render_expr(
-						field.expr
-					)}`)
+					table.insert(
+						fields,
+						`[{render_expr(field.key)}] = {render_expr(field.expr)}`
+					)
 				end
 			end
-            str ..= table.concat(fields, ", ")
+			str ..= table.concat(fields, ", ")
 			str ..= write "}"
 			indentation -= 1
 		end
@@ -236,9 +296,9 @@ function render_stat(stat: sq.Stat)
 
 		if stat.init then
 			if stat.init.kind == "localassignment" then
-                init = `local {stat.init.ident} = {render_expr(stat.init.expr)}`
-            else
-			    init = render_expr(stat.init)
+				init = `local {stat.init.ident} = {render_expr(stat.init.expr)}`
+			else
+				init = render_expr(stat.init)
 			end
 		end
 		if stat.cond_expr then
@@ -265,8 +325,10 @@ function render_stat(stat: sq.Stat)
 		str ..= line(`local {stat.ident} = {render_expr(stat.expr)}`)
 	elseif stat.kind == "function" then
 		local method = if stat.method then `:{stat.method}` else ""
-		str ..= line(`function {stat.root}{method}{render_functionbody(stat.body)}`)
-        return str
+		str ..= line(
+			`function {stat.root}{method}{render_functionbody(stat.body)}`
+		)
+		return str
 	elseif stat.kind == "class" then
 		--TODO
 	elseif stat.kind == "trycatch" then
