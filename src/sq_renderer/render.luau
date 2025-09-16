@@ -77,7 +77,6 @@ local function render_helpers()
 ::__iter__ <- function(args, func) {\
     local first = args[0]\
     if (typeof first == "function") {\
-        printl("hello")\
         local idx = null\
         local state = null\
         if (1 in args) {\

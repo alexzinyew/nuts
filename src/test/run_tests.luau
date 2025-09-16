@@ -1,6 +1,7 @@
 local fs = require "@lune/fs"
 local process = require "@lune/process"
 local net = require "@lune/net"
+local luau = require "@lune/luau"
 
 local luau_parser = require "@luaup/lossless/parse"
 local sq_transformer = require "@src/sq_transformer/transform"
@@ -71,6 +72,22 @@ local function run_tests()
 	end
 	FINISH()
 
+	for _, test_name in test_dir do
+		TEST(`{test_name} luau`, function()
+			local path = "src/test/tests/" .. test_name
+			local compiled = luau.compile(fs.readFile(path))
+			luau.load(compiled, {
+				debugName = test_name,
+				environment = {
+					CHECK = CHECK,
+					CASE = CASE,
+					cprintl = print,
+				},
+			})()
+		end)
+	end
+	FINISH()
+
 	print ""
 	print "Connecting to console"
 	print ""
@@ -79,7 +96,7 @@ local function run_tests()
 	tcp:write "sar_con_filter 0; clear\r\n"
 
 	for _, test in scripts do
-		TEST(test, function()
+		TEST(`{test} squirrel`, function()
 			tcp:write(`script_execute tests/{test}; echo TEST_COMPLETE\r\n`)
 
 			local test = testkit.ctest()
@@ -101,11 +118,11 @@ local function run_tests()
 							continue
 						end
 						if line:find "TEST_CHECK" then
-                            if test.case.result ~= 2 then
-                                local split = string.split(line, " ")
-                                test.case.result = split[2] == "pass" and 1 or 2
-                                test.case.line = split[3]
-                            end
+							if test.case.result ~= 2 then
+								local split = string.split(line, " ")
+								test.case.result = split[2] == "pass" and 1 or 2
+								test.case.line = split[3]
+							end
 						end
 						if line:find "AN ERROR HAS OCCURED" then
 							error_message =

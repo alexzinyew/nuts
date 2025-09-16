@@ -1,13 +1,21 @@
 --!nocheck
 --!nolint
 
-CASE "for loop no incr"
+CASE "for loop no increment"
 local sum = 0
 for i = 1, 3 do
 	sum += i
 end
 
 CHECK(sum == 1 + 2 + 3)
+
+CASE "for loop with increment"
+local sum = 0
+for i = 5, 1, -1 do
+	sum += i
+end
+
+CHECK(sum == 1 + 2 + 3 + 4 + 5)
 
 CASE "for loops scoped"
 local upper = 0

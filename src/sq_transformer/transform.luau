@@ -434,7 +434,6 @@ function transform_functionbody(body: luau.FunctionBody): sq.FunctionBody
 
 	for i, stat in block.stats do
 		if i == 1 then
-			print "unshifting"
 			unshift(new_block.stats, { stat })
 			continue
 		end
@@ -697,10 +696,16 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 
 		local var = scope_var(create.var(create.var_nameroot(var_name), {}))
 		local init = create.expr_assignment(var, "<-", start_value)
-		-- local init = create.stat_localvariable(var_name, start_value)
 		local expr_var = create.expr_var(var)
 
-		local cond_expr = create.binary(expr_var, "<=", cond)
+		local cond_comparison = create.expr_var(
+			create.var(
+				create.var_parenroot(create.binary(expr_var, "-", incr_amount)),
+				{}
+			)
+		)
+
+		local cond_expr = create.binary(cond_comparison, "!=", cond)
 		local incr_expr = create.expr_assignment(var, "+=", incr_amount)
 
 		local backup_name = unique_id "backup"
@@ -710,6 +715,8 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 				create.var(create.var_nameroot(SCOPE_TABLE_ROOT), {})
 			)
 		)
+
+        --this whole backup stuff could just be replaced with a function similar to iter
 
 		prereq(backup)
 		prereq((new_scope()))
@@ -756,7 +763,6 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 
 		for i, stat in block.stats do
 			if i == 1 then
-				print "unshifting"
 				unshift(new_block.stats, { stat })
 				continue
 			end
