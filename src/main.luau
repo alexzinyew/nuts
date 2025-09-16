@@ -1,11 +1,11 @@
 local fs = require "@lune/fs"
 local process = require "@lune/process"
 
-local luau_parser = require "../luaup/lossless/parse"
-local sq_transform = require "./sq_transformer/transform"
-local sq = require "./sq_ast/sq_ast"
+local luau_parser = require "@luaup/lossless/parse"
+local sq_transform = require "@src/sq_transformer/transform"
+local sq = require "@src/sq_ast/sq_ast"
 
-local renderer = require "./sq_renderer/render"
+local renderer = require "@src/sq_renderer/render"
 
 local args = process.args
 local file_name = assert(args[1], "expected file name")

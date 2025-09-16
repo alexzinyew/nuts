@@ -1,12 +1,14 @@
-local luau = require "../../luaup/lossless/cst"
-local sq = require "../sq_ast/sq_ast"
+local luau = require "@luaup/lossless/cst"
+local sq = require "@src/sq_ast/sq_ast"
 
-local create = require "../sq_ast/create"
+local create = require "@src/sq_ast/create"
 
 local SCOPE_TABLE_ROOT = "__scope__"
 local SCOPE_TABLE_GEN = "__new_scope__"
 local INDEX_FUNC = "__index__"
+local SET_FUNC = "__set__"
 local JOIN_FUNC = "__join__"
+local ITER_FUNC = "__iter__"
 
 --stylua: ignore start
 local KEYWORDS = {
@@ -413,29 +415,17 @@ function tuple_var(var: sq.Var): sq.ExprVar
 end
 
 function transform_functionbody(body: luau.FunctionBody): sq.FunctionBody
-	local array_name = unique_id "args"
 	local block = transform_block(body.block)
 
-	local param_assignments = {}
-
-	for i, pair in body.params do
-		local param = pair.node.name.text
+	local array_name = unique_id "args"
+	local vars = {}
+	for _, pair in body.params do
 		table.insert(
-			param_assignments,
-			create.stat_expr(
-				create.expr_assignment(
-					scope_var(create.var(create.var_nameroot(param), {})),
-					"<-",
-					create.expr_var(
-						wrap_index(
-							create.var(create.var_nameroot(array_name), {}),
-							create.int(i - 1)
-						)
-					)
-				)
-			)
+			vars,
+			create.var(create.var_nameroot(pair.node.name.text), {})
 		)
 	end
+	local param_assignments = unpack_tuple(array_name, vars, true)
 
 	local new_block = {
 		stats = param_assignments,
@@ -743,60 +733,46 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			table.insert(right, pair.node)
 		end
 
-		local expr, n_exprs = transform_exprarray(right)
-
-        if n_exprs > 1 then
-            -- not generalized
-        elseif n_exprs == 1 then
-            -- set expr to 0th index of expr
-            -- sq has generalized iteration and _nexti which should work?
-            -- TODO confirm above
-        else
-            error ""
-        end
-
-		local to_unpack = {}
-
-		local i_id = unique_id "_"
-		for i, pair in stat.bindings do
-			local ident = safe_ident(pair.node.name.text)
-			if i == 1 then
-				i_id = ident
-			else
-				table.insert(
-					to_unpack,
-					scope_var(create.var(create.var_nameroot(ident), {}))
-				)
-			end
+		-- iterator func always returns i, ...
+		if #left == 1 then
+			unshift(left, { unique_id "_" })
 		end
 
-		local v_id = unique_id "tuple"
-		local block = transform_block(stat.block, true)
+		local array = transform_exprarray(right)
+
+		local tuple_name = unique_id "args"
+		local block = transform_block(stat.block)
+
+		local vars = {}
+		for _, param in left do
+			table.insert(vars, create.var(create.var_nameroot(param), {}))
+		end
+		local assignments = unpack_tuple(tuple_name, vars, true)
 
 		local new_block = {
-			stats = unpack_tuple(v_id, to_unpack, true),
+			stats = assignments,
 			last_stat = block.last_stat,
 		} :: sq.Block
 
 		for i, stat in block.stats do
+			if i == 1 then
+				print "unshifting"
+				unshift(new_block.stats, { stat })
+				continue
+			end
 			table.insert(new_block.stats, stat)
 		end
 
-		local backup_name = unique_id "backup"
-		local backup, backup_var = create.stat_localvariable(
-			backup_name,
-			create.expr_var(
-				create.var(create.var_nameroot(SCOPE_TABLE_ROOT), {})
-			)
+		local block_fn = create.expr_function(
+			create.functionbody({ tuple_name }, { SCOPE_TABLE_ROOT }, new_block)
 		)
 
-		return {
-			create.stat_foreach(i_id, v_id, expr, new_block),
-			create.stat_localvariable(
-				SCOPE_TABLE_ROOT,
-				create.expr_var(backup_var)
-			),
-		}
+		local fn_call = create.var(
+			create.var_nameroot(ITER_FUNC),
+			{ create.var_callsuffix(nil, { array, block_fn }) }
+		)
+
+		return { create.stat_expr(create.expr_var(fn_call)) }
 	elseif stat.kind == "localvariable" then
 		local left, right = {}, {}
 

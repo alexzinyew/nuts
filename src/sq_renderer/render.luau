@@ -1,4 +1,4 @@
-local sq = require "../sq_ast/sq_ast"
+local sq = require "@src/sq_ast/sq_ast"
 
 local indentation = -1
 
@@ -64,7 +64,7 @@ local function render_helpers()
         local i = null\
         if (1 in fargs) i = fargs[1]\
         if (i == null) \
-            i = 0\
+            i = 1\
         else\
             i++\
     \
@@ -77,6 +77,7 @@ local function render_helpers()
 ::__iter__ <- function(args, func) {\
     local first = args[0]\
     if (typeof first == "function") {\
+        printl("hello")\
         local idx = null\
         local state = null\
         if (1 in args) {\
@@ -93,7 +94,7 @@ local function render_helpers()
             }\
         } else {\
             if (2 in args) {\
-                idx = args[2] - 1\
+                idx = args[2]\
             }\
             while (true) {\
                 local ret = first([state, idx])\

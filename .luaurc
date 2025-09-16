@@ -4,6 +4,6 @@
     "src": "./src",
     "luaup": "./luaup",
     "vendor": "./vendor",
-    "lune": "~/.lune/.typedefs/0.10.1/"
+    "lune": "~/.lune/.typedefs/0.10.2/"
   }
 }

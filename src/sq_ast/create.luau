@@ -1,5 +1,5 @@
-local luau = require "../../luaup/lossless/cst"
-local sq = require "../sq_ast/sq_ast"
+local luau = require "@luaup/lossless/cst"
+local sq = require "@src/sq_ast/sq_ast"
 
 local create = {}
 
