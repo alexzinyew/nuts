@@ -93,7 +93,11 @@ local function run_tests()
 	print ""
 	local tcp = net.tcp.connect("localhost", tcp_port)
 
-	tcp:write "sar_con_filter 0; clear\r\n"
+	tcp:write "sar_con_filter_reset; sar_con_filter 1\r\n"
+	tcp:write "sar_con_filter_block TEST_CHECK\r\n"
+    tcp:write "sar_con_filter_block TEST_CASE\r\n"
+	tcp:write "sar_con_filter_block TEST_COMPLETE\r\n"
+	tcp:write "clear\r\n"
 
 	for _, test in scripts do
 		TEST(`{test} squirrel`, function()

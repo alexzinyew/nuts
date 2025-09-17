@@ -20,6 +20,8 @@ local function render_helpers()
 }\
 \
 ::__set__ <- function(table, key, value) {\
+    if (value == null)\
+        return delete table[key]\
     return table[key] <- value\
 }\
 \
