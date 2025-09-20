@@ -197,6 +197,26 @@ function can_be_tuple(var: sq.Var): boolean
 	return possible_tuples[var] ~= nil
 end
 
+function assign_var(
+	var: sq.Var,
+	op: sq.AssignmentOperator,
+	expr: sq.Expr
+): sq.StatExpr
+	local suffixes = var.suffixes
+	if #suffixes > 0 then
+		local call = suffixes[#suffixes]
+		-- TODO assert its INDEX_FUNC
+		if call.kind == "call" then
+			local set_call = create.var(create.var_nameroot(SET_FUNC), {
+				create.var_callsuffix(nil, { call.args[1], call.args[2], expr}),
+			})
+			return create.stat_expr(create.expr_var(set_call))
+		end
+	end
+
+	return create.stat_expr(create.expr_assignment(var, op, expr))
+end
+
 function unpack_tuple(
 	tuple: sq.Identifier,
 	vars: { sq.Var },
@@ -214,14 +234,12 @@ function unpack_tuple(
 			)
 		)
 
-		local operator = "="
+		local operator: sq.AssignmentOperator = "="
 		if #var.suffixes > 1 or local_variable then
 			operator = "<-"
 		end
 
-		assignment = create.stat_expr(
-			create.expr_assignment(var, operator :: any, value)
-		)
+		assignment = assign_var(var, operator, value)
 
 		table.insert(stats, assignment)
 	end
@@ -286,7 +304,7 @@ function transform_assignments(
 				create.var(create.var_nameroot(safe_ident(leftv)), {})
 			)
 		else
-			other_lvar = unwrap_index(transform_var(leftv))
+			other_lvar = transform_var(leftv)
 		end
 		table.insert(vars, other_lvar)
 	end
@@ -403,6 +421,11 @@ function transform_var(var: luau.Var): sq.Var
 end
 
 -- mutates
+-- turns
+-- index(tuple, 0)
+--
+-- into
+-- tuple
 function tuple_var(var: sq.Var): sq.ExprVar
 	local suffixes = var.suffixes
 	if possible_tuples[var] then
@@ -621,16 +644,16 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 		local expr = transform_expr(stat.right)
 		local op = stat.operator.kind
 
-		var = unwrap_index(var)
-
 		if op == "//=" then
 			local floored = floor_div(create.expr_var(var), expr)
 			return {
-				create.stat_expr(create.expr_assignment(var, "=", floored)),
+				assign_var(var, "=", floored),
 			}
 		elseif op == "^=" then
 			local powed = pow(create.expr_var(var), expr)
-			return { create.stat_expr(create.expr_assignment(var, "=", powed)) }
+			return {
+				assign_var(var, "=", powed),
+			}
 		elseif op == "..=" then
 			op = "+"
 		end
@@ -716,7 +739,7 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 			)
 		)
 
-        --this whole backup stuff could just be replaced with a function similar to iter
+		--this whole backup stuff could just be replaced with a function similar to iter
 
 		prereq(backup)
 		prereq((new_scope()))
@@ -822,8 +845,8 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 				)
 			)
 
-			local var = unwrap_index(scope_var(create.var(root, suffixes)))
-			return { create.stat_expr(create.expr_assignment(var, "<-", func)) }
+			local var = scope_var(create.var(root, suffixes))
+			return assign_var(var, "<-", func)
 		else
 			-- statement
 
@@ -848,12 +871,11 @@ function transform_stat(stat: luau.Stat): { sq.Stat }
 
 		local func = create.expr_function(transform_functionbody(stat.body))
 
-		local var = unwrap_index(
-			scope_var(
-				create.var(create.var_nameroot(safe_ident(stat.name.text)), {})
-			)
+		local var = scope_var(
+			create.var(create.var_nameroot(safe_ident(stat.name.text)), {})
 		)
-		return { create.stat_expr(create.expr_assignment(var, "<-", func)) }
+
+		return { assign_var(var, "<-", func) }
 	elseif stat.kind == "typefunction" then
 		return {}
 	elseif stat.kind == "type" then

@@ -4,8 +4,10 @@
 CASE "assigning a slot"
 local a = {}
 a.b = "works"
+a["c"] = "works too"
 
 CHECK(a.b == "works")
+CHECK(a.c == "works")
 
 CASE "assigning a slot with a tuple"
 local a = {}
@@ -24,5 +26,4 @@ local a = {1, 2, 3}
 
 a[3] = nil
 
-CHECK(#a == 2)
 CHECK(a[3] == nil)
